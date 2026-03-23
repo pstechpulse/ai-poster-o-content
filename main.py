@@ -6,6 +6,7 @@ import time
 import random
 import cv2
 import webvtt
+import numpy as np
 from google import genai
 import PIL.Image
 from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip, concatenate_videoclips
@@ -15,7 +16,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
 
-# 1. COMPATIBILITY FIX
+# 1. PILLOW & MOVIEPY FIXES
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 
@@ -37,21 +38,26 @@ def send_telegram(message=None, file_path=None):
 
 def get_daily_topic(mode):
     seed = time.time()
-    lang_instruction = "Use ROMANIZED HINDI (Hinglish) with Desi BTech slang." if mode == "hindi" else "Use high-energy Global English. NO HINDI."
+    # Instruction for Hinglish vs Global English
+    lang_task = (
+        "Write in ROMANIZED HINDI (Hinglish) using BTech slang. Do NOT use Devanagari script."
+        if mode == "hindi" else 
+        "Write in 100% High-Energy Global English. Professional and punchy."
+    )
     
     prompt = f"""
-    Seed: {seed}. Mode: {mode}. {lang_instruction}
-    Research a unique AI tool for students/developers. 
-    ACCURACY RULE: Do not hallucinate features. Only mention 100% real capabilities.
+    Seed: {seed}. Mode: {mode}. {lang_task}
+    Research and pick ONE unique AI tool. Focus on variety (e.g., Video AI, Coding Agents, Research Tools).
+    DO NOT repeat common tools like ChatGPT. Pick something fresh.
     
     Return ONLY a JSON object:
     {{
       "tool_name": "Name",
-      "hook": "Catchy 3-word hook",
-      "script": "40s high-energy script. Keep sentences short for better sub-syncing.",
+      "hook": "POV: YOUR HOOK HERE",
+      "script": "40s high-energy script with short, punchy sentences.",
       "keywords": ["tech", "coding", "productivity"],
       "title": "Best AI for Students #shorts #{mode}",
-      "description": "Link in bio! #shorts"
+      "description": "Check link in bio! #shorts #tech"
     }}
     """
     response = client.models.generate_content(
@@ -66,7 +72,6 @@ async def generate_voice_and_subs(text, mode):
     communicate = edge_tts.Communicate(text, voice, rate="+10%")
     submaker = edge_tts.SubMaker()
     
-    # Generate audio and capture word timestamps
     with open("audio.mp3", "wb") as f:
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
@@ -74,11 +79,18 @@ async def generate_voice_and_subs(text, mode):
             elif chunk["type"] == "WordBoundary":
                 submaker.feed(chunk)
                 
-    with open("subs.vtt", "w", encoding="utf-8") as f:
-        f.write(submaker.get_vtt())
+    # FIX: Generate SRT and convert to VTT for webvtt-py
+    with open("subs.srt", "w", encoding="utf-8") as f:
+        f.write(submaker.get_srt())
+    
+    # Convert SRT to VTT
+    webvtt.from_srt('subs.srt').save('subs.vtt')
+
+def blur(image):
+    return cv2.GaussianBlur(image, (51, 51), 0)
 
 def build_video(data):
-    print("🎬 Building High-Retention Video...")
+    print("🎬 Building high-retention vertical video...")
     headers = {"Authorization": os.getenv("PEXELS_API_KEY")}
     clips = []
     
@@ -89,23 +101,26 @@ def build_video(data):
             fname = f"{kw}.mp4"
             with open(fname, 'wb') as f: f.write(requests.get(v_url).content)
             
-            clip = VideoFileClip(fname).subclip(0, 5).resize(height=1920)
-            clip = clip.crop(x_center=clip.w/2, y_center=clip.h/2, width=1080, height=1920)
-            clips.append(clip)
+            raw_clip = VideoFileClip(fname).subclip(0, 5)
+            # Create 9:16 Portrait from 16:9 Landscape
+            bg = raw_clip.resize(height=1920).fl_image(blur).crop(x_center=960, y_center=540, width=1080, height=1920)
+            fg = raw_clip.resize(width=1080).set_position("center")
+            clips.append(CompositeVideoClip([bg, fg], size=(1080, 1920)))
         except: continue
 
     bg_video = concatenate_videoclips(clips, method="compose")
     audio = AudioFileClip("audio.mp3")
     bg_video = bg_video.set_duration(audio.duration)
 
-    # WORD-BY-WORD SUBTITLES
+    # DYNAMIC WORD-BY-WORD SUBTITLES
     sub_clips = []
     vtt = webvtt.read('subs.vtt')
     for entry in vtt:
-        start = sum(x * float(t) for x, t in zip([3600, 60, 1], entry.start.split(':')))
-        end = sum(x * float(t) for x, t in zip([3600, 60, 1], entry.end.split(':')))
+        start = entry.start_in_seconds
+        end = entry.end_in_seconds
         
-        txt = TextClip(entry.text.upper(), fontsize=90, color='yellow', stroke_color='black', 
+        # Word-by-word pop-in
+        txt = TextClip(entry.text.upper(), fontsize=100, color='yellow', stroke_color='black', 
                        stroke_width=2, font='DejaVu-Sans-Bold', method='caption', size=(1000, None))
         txt = txt.set_start(start).set_duration(end - start).set_position('center')
         sub_clips.append(txt)
@@ -119,7 +134,8 @@ def upload_all(data):
         cl = Client()
         cl.set_settings(json.loads(os.getenv("INSTA_SESSION_JSON")))
         cl.clip_upload("output.mp4", caption=f"{data['title']}\n\n{data['description']}")
-    except Exception as e: print(f"IG Error: {e}")
+        print("✅ Posted to Instagram")
+    except Exception as e: print(f"❌ IG Error: {e}")
 
     # YouTube
     try:
@@ -133,11 +149,12 @@ def upload_all(data):
             },
             media_body=MediaFileUpload("output.mp4")
         ).execute()
-    except Exception as e: print(f"YT Error: {e}")
+        print("✅ Posted to YouTube")
+    except Exception as e: print(f"❌ YT Error: {e}")
 
 async def run_pipeline():
     try:
-        # RANDOM MODE SELECTION
+        # RANDOM STRATEGY SELECTION
         mode = random.choice(["hindi", "global"])
         print(f"🚀 Running in {mode.upper()} mode...")
         
@@ -145,9 +162,9 @@ async def run_pipeline():
         await generate_voice_and_subs(data['script'], mode)
         build_video(data)
         upload_all(data)
-        send_telegram(message=f"✅ {mode.upper()} Vid: {data['tool_name']}", file_path="output.mp4")
+        send_telegram(message=f"✅ {mode.upper()} Content: {data['tool_name']}", file_path="output.mp4")
     except Exception as e:
-        send_telegram(message=f"💥 CRASH: {str(e)[:150]}")
+        send_telegram(message=f"💥 HEALTH CHECK: Bot Crashed!\nError: {str(e)[:150]}")
         raise e
 
 if __name__ == "__main__":
