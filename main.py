@@ -2,57 +2,110 @@ import os
 import random
 import requests
 import json
+import asyncio
 import google.generativeai as genai
 from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip, concatenate_videoclips
 import edge_tts
-import asyncio
+from instagrapi import Client
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+from google.oauth2.credentials import Credentials
 
-# Setup
+# 1. SETUP & CONFIG
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel('gemini-3.1-flash-lite')
 
-async def make_human_voice(text):
-    # 'en-US-AndrewNeural' or 'en-IN-PrabhatNeural' are great human-like choices
+# 2. DYNAMIC TOOL RESEARCH & SCRIPTING
+def get_daily_topic():
+    # We ask Gemini to act as a researcher to find a trending AI tool
+    prompt = """
+    Find a trending AI tool for students or developers. 
+    Return ONLY a JSON object:
+    {
+      "tool_name": "Name of tool",
+      "hook": "Wait, stop scrolling if you're a BTech student...",
+      "script": "Full 40 second engaging script here...",
+      "keywords": ["coding", "ai", "laptop"],
+      "title": "Best AI for BTech #shorts #ai",
+      "description": "Check the link in bio for the tool!"
+    }
+    """
+    response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
+    return json.loads(response.text)
+
+# 3. HUMAN-LIKE VOICE
+async def generate_voice(text):
+    # Using 'Andrew' - he sounds like a real tech reviewer
     communicate = edge_tts.Communicate(text, "en-US-AndrewNeural")
     await communicate.save("audio.mp3")
 
-def get_visuals(keywords):
+# 4. CAPTION GENERATOR (Word-by-Word style)
+def create_captions(text, duration):
+    # This creates a big bold central caption
+    # For a true 'BTech' bot, we keep it simple but bold
+    return TextClip(
+        text, 
+        fontsize=70, 
+        color='yellow', 
+        font='Arial-Bold',
+        method='caption', 
+        size=(800, None)
+    ).set_duration(duration).set_position('center')
+
+# 5. VIDEO ASSEMBLY
+def build_video(data):
+    # Fetch Backgrounds
     headers = {"Authorization": os.getenv("PEXELS_API_KEY")}
     clips = []
-    for kw in keywords[:3]: # Get 3 different clips for variety
-        res = requests.get(f"https://api.pexels.com/videos/search?query={kw}&per_page=1", headers=headers)
-        url = res.json()['videos'][0]['video_files'][0]['link']
-        r = requests.get(url)
-        with open(f"{kw}.mp4", 'wb') as f: f.write(r.content)
+    for kw in data['keywords']:
+        res = requests.get(f"https://api.pexels.com/videos/search?query={kw}&per_page=1", headers=headers).json()
+        v_url = res['videos'][0]['video_files'][0]['link']
+        with open(f"{kw}.mp4", 'wb') as f: f.write(requests.get(v_url).content)
         clips.append(VideoFileClip(f"{kw}.mp4").subclip(0, 5).resize(height=1920))
-    return clips
-
-def assemble_video(script_data):
-    # Logic to overlay Big Bold Captions
+    
+    bg_video = concatenate_videoclips(clips, method="compose")
     audio = AudioFileClip("audio.mp3")
-    backgrounds = get_visuals(script_data['keywords'])
-    final_bg = concatenate_videoclips(backgrounds).set_duration(audio.duration)
+    bg_video = bg_video.set_duration(audio.duration)
     
-    # Generate pop-in captions
-    # (Simplified for briefness: usually uses 'TextClip' with a yellow/white font)
-    caption = TextClip(script_data['hook'], fontsize=70, color='yellow', font='Arial-Bold', 
-                       method='caption', size=(800, None)).set_duration(3).set_position('center')
+    # Overlay the hook as a big caption
+    cap = create_captions(data['hook'], audio.duration)
     
-    final = CompositeVideoClip([final_bg, caption])
-    final.set_audio(audio).write_videofile("final_short.mp4", fps=24)
+    final = CompositeVideoClip([bg_video, cap])
+    final.set_audio(audio).write_videofile("output.mp4", fps=24, codec="libx264")
 
-async def main():
-    # 1. Gemini writes script + picks search keywords for Pexels
-    prompt = "Review Sider AI. Return JSON: {'script': '...', 'hook': 'Short catchy hook', 'keywords': ['coding', 'robot', 'laptop']}"
-    raw = model.generate_content(prompt).text
-    data = json.loads(raw)
-    
-    # 2. Generate Human Voice
-    await make_human_voice(data['script'])
-    
-    # 3. Build & Upload
-    assemble_video(data)
-    # [Upload logic for YT/IG goes here]
+# 6. AUTO-UPLOADING LOGIC
+def upload_all(data):
+    # Instagram
+    try:
+        cl = Client()
+        cl.set_settings(json.loads(os.getenv("INSTA_SESSION_JSON")))
+        cl.clip_upload("output.mp4", caption=f"{data['title']}\n\n{data['description']}")
+        print("✅ Posted to Instagram")
+    except Exception as e: print(f"❌ IG Error: {e}")
+
+    # YouTube
+    try:
+        creds = Credentials.from_authorized_user_info(json.loads(os.getenv("YOUTUBE_TOKEN_JSON")))
+        youtube = build("youtube", "v3", credentials=creds)
+        request = youtube.videos().insert(
+            part="snippet,status",
+            body={
+                "snippet": {"title": data['title'], "description": data['description'], "categoryId": "27"},
+                "status": {"privacyStatus": "public"}
+            },
+            media_body=MediaFileUpload("output.mp4")
+        )
+        request.execute()
+        print("✅ Posted to YouTube")
+    except Exception as e: print(f"❌ YT Error: {e}")
+
+async def run_pipeline():
+    print("🚀 Starting Pipeline...")
+    data = get_daily_topic()
+    await generate_voice(data['script'])
+    build_video(data)
+    upload_all(data)
+    print("🏁 Done!")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(run_pipeline())
