@@ -3,9 +3,10 @@ import json
 import asyncio
 import requests
 import time
+import random
 import cv2
-import numpy as np
-from google import genai  # 2026 SDK
+import webvtt
+from google import genai
 import PIL.Image
 from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip, concatenate_videoclips
 import edge_tts
@@ -14,11 +15,10 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
 
-# 1. PILLOW & COMPATIBILITY FIXES
+# 1. COMPATIBILITY FIX
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 
-# 2. INITIALIZE CLIENT
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 def send_telegram(message=None, file_path=None):
@@ -33,21 +33,25 @@ def send_telegram(message=None, file_path=None):
         else:
             url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={message}"
             requests.get(url)
-    except Exception as e: print(f"Telegram Log: {e}")
+    except Exception as e: print(f"TG Error: {e}")
 
-def get_daily_topic():
+def get_daily_topic(mode):
     seed = time.time()
+    lang_instruction = "Use ROMANIZED HINDI (Hinglish) with Desi BTech slang." if mode == "hindi" else "Use high-energy Global English. NO HINDI."
+    
     prompt = f"""
-    Seed: {seed}. You are a Viral Tech Content Strategist for Indian BTech students.
-    Research and pick ONE unique AI tool for: Exam prep, Coding, or Placement prep.
+    Seed: {seed}. Mode: {mode}. {lang_instruction}
+    Research a unique AI tool for students/developers. 
+    ACCURACY RULE: Do not hallucinate features. Only mention 100% real capabilities.
+    
     Return ONLY a JSON object:
     {{
       "tool_name": "Name",
-      "hook": "Wait... Am I cooked? Mid-sems start tomorrow and I haven't opened the PDF.",
-      "script": "40s high-energy script. Use Hinglish and BTech slang (Backlogs, 75% attendance, placements).",
-      "keywords": ["coding", "office tech", "studying"],
-      "title": "BTech Hack: This AI is a life saver #shorts #btech #engineering",
-      "description": "Stop struggling. Tool link in bio! Follow for more hacks. #shorts"
+      "hook": "Catchy 3-word hook",
+      "script": "40s high-energy script. Keep sentences short for better sub-syncing.",
+      "keywords": ["tech", "coding", "productivity"],
+      "title": "Best AI for Students #shorts #{mode}",
+      "description": "Link in bio! #shorts"
     }}
     """
     response = client.models.generate_content(
@@ -57,16 +61,24 @@ def get_daily_topic():
     )
     return json.loads(response.text)
 
-async def generate_voice(text):
-    communicate = edge_tts.Communicate(text, "en-US-AndrewNeural")
-    await communicate.save("audio.mp3")
-
-def blur(image):
-    """ Apply Gaussian Blur for the background """
-    return cv2.GaussianBlur(image, (51, 51), 0)
+async def generate_voice_and_subs(text, mode):
+    voice = "hi-IN-MadhurNeural" if mode == "hindi" else "en-US-BrianNeural"
+    communicate = edge_tts.Communicate(text, voice, rate="+10%")
+    submaker = edge_tts.SubMaker()
+    
+    # Generate audio and capture word timestamps
+    with open("audio.mp3", "wb") as f:
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                f.write(chunk["data"])
+            elif chunk["type"] == "WordBoundary":
+                submaker.feed(chunk)
+                
+    with open("subs.vtt", "w", encoding="utf-8") as f:
+        f.write(submaker.get_vtt())
 
 def build_video(data):
-    print("🎬 Building Vertical 9:16 Video...")
+    print("🎬 Building High-Retention Video...")
     headers = {"Authorization": os.getenv("PEXELS_API_KEY")}
     clips = []
     
@@ -77,34 +89,29 @@ def build_video(data):
             fname = f"{kw}.mp4"
             with open(fname, 'wb') as f: f.write(requests.get(v_url).content)
             
-            # ORIENTATION FIX LOGIC
-            raw_clip = VideoFileClip(fname).subclip(0, 5)
-            
-            # 1. Create blurred background (scaled to 1920 height)
-            bg = raw_clip.resize(height=1920)
-            bg = bg.fl_image(blur)
-            bg = bg.crop(x_center=bg.w/2, y_center=bg.h/2, width=1080, height=1920)
-            
-            # 2. Place original landscape clip in the center
-            fg = raw_clip.resize(width=1080)
-            fg = fg.set_position("center")
-            
-            combined = CompositeVideoClip([bg, fg], size=(1080, 1920))
-            clips.append(combined)
+            clip = VideoFileClip(fname).subclip(0, 5).resize(height=1920)
+            clip = clip.crop(x_center=clip.w/2, y_center=clip.h/2, width=1080, height=1920)
+            clips.append(clip)
         except: continue
 
-    if not clips: raise Exception("No valid visuals found.")
-    
     bg_video = concatenate_videoclips(clips, method="compose")
     audio = AudioFileClip("audio.mp3")
     bg_video = bg_video.set_duration(audio.duration)
-    
-    # BIG BOLD CAPTIONS
-    cap = TextClip(data['hook'], fontsize=70, color='yellow', font='DejaVu-Sans-Bold',
-                   method='caption', size=(900, None)).set_duration(audio.duration).set_position('center')
-    
-    final = CompositeVideoClip([bg_video, cap])
-    final.set_audio(audio).write_videofile("output.mp4", fps=24, codec="libx264", audio_codec="aac")
+
+    # WORD-BY-WORD SUBTITLES
+    sub_clips = []
+    vtt = webvtt.read('subs.vtt')
+    for entry in vtt:
+        start = sum(x * float(t) for x, t in zip([3600, 60, 1], entry.start.split(':')))
+        end = sum(x * float(t) for x, t in zip([3600, 60, 1], entry.end.split(':')))
+        
+        txt = TextClip(entry.text.upper(), fontsize=90, color='yellow', stroke_color='black', 
+                       stroke_width=2, font='DejaVu-Sans-Bold', method='caption', size=(1000, None))
+        txt = txt.set_start(start).set_duration(end - start).set_position('center')
+        sub_clips.append(txt)
+
+    final = CompositeVideoClip([bg_video] + sub_clips)
+    final.set_audio(audio).write_videofile("output.mp4", fps=24, codec="libx264")
 
 def upload_all(data):
     # Instagram
@@ -112,8 +119,7 @@ def upload_all(data):
         cl = Client()
         cl.set_settings(json.loads(os.getenv("INSTA_SESSION_JSON")))
         cl.clip_upload("output.mp4", caption=f"{data['title']}\n\n{data['description']}")
-        print("✅ Instagram Success")
-    except Exception as e: print(f"❌ IG Error: {e}")
+    except Exception as e: print(f"IG Error: {e}")
 
     # YouTube
     try:
@@ -127,18 +133,21 @@ def upload_all(data):
             },
             media_body=MediaFileUpload("output.mp4")
         ).execute()
-        print("✅ YouTube Success")
-    except Exception as e: print(f"❌ YT Error: {e}")
+    except Exception as e: print(f"YT Error: {e}")
 
 async def run_pipeline():
     try:
-        data = get_daily_topic()
-        await generate_voice(data['script'])
+        # RANDOM MODE SELECTION
+        mode = random.choice(["hindi", "global"])
+        print(f"🚀 Running in {mode.upper()} mode...")
+        
+        data = get_daily_topic(mode)
+        await generate_voice_and_subs(data['script'], mode)
         build_video(data)
         upload_all(data)
-        send_telegram(message=f"✅ New Content: {data['tool_name']}", file_path="output.mp4")
+        send_telegram(message=f"✅ {mode.upper()} Vid: {data['tool_name']}", file_path="output.mp4")
     except Exception as e:
-        send_telegram(message=f"💥 HEALTH CHECK: Bot Crashed!\nError: {str(e)[:150]}")
+        send_telegram(message=f"💥 CRASH: {str(e)[:150]}")
         raise e
 
 if __name__ == "__main__":
