@@ -13,7 +13,7 @@ from google.oauth2.credentials import Credentials
 
 # 1. SETUP & CONFIG
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-3.1-flash-lite')
+model = genai.GenerativeModel('gemini-3.1-flash-lite-preview')
 
 # 2. DYNAMIC TOOL RESEARCH & SCRIPTING
 def get_daily_topic():
