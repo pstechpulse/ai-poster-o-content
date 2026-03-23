@@ -3,6 +3,8 @@ import json
 import asyncio
 import requests
 import time
+import cv2
+import numpy as np
 from google import genai  # 2026 SDK
 import PIL.Image
 from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip, concatenate_videoclips
@@ -12,7 +14,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
 
-# 1. PILLOW & ENVIRONMENT FIXES
+# 1. PILLOW & COMPATIBILITY FIXES
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 
@@ -34,21 +36,18 @@ def send_telegram(message=None, file_path=None):
     except Exception as e: print(f"Telegram Log: {e}")
 
 def get_daily_topic():
-    # We add a timestamp to the prompt to force variety
     seed = time.time()
     prompt = f"""
     Seed: {seed}. You are a Viral Tech Content Strategist for Indian BTech students.
     Research and pick ONE unique AI tool for: Exam prep, Coding, or Placement prep.
-    Examples: Gemini 3 Flash for circuit board analysis, Lovable for full-stack apps, Perplexity for deep research.
-    
     Return ONLY a JSON object:
     {{
       "tool_name": "Name",
       "hook": "Wait... Am I cooked? Mid-sems start tomorrow and I haven't opened the PDF.",
       "script": "40s high-energy script. Use Hinglish and BTech slang (Backlogs, 75% attendance, placements).",
-      "keywords": ["coding", "exam", "robotics"],
+      "keywords": ["coding", "office tech", "studying"],
       "title": "BTech Hack: This AI is a life saver #shorts #btech #engineering",
-      "description": "Stop struggling. Tool link in bio! Follow @YourHandle for more hacks."
+      "description": "Stop struggling. Tool link in bio! Follow for more hacks. #shorts"
     }}
     """
     response = client.models.generate_content(
@@ -59,37 +58,56 @@ def get_daily_topic():
     return json.loads(response.text)
 
 async def generate_voice(text):
-    # Andrew is the best 'Human-like' voice in 2026 for tech reviews
     communicate = edge_tts.Communicate(text, "en-US-AndrewNeural")
     await communicate.save("audio.mp3")
 
+def blur(image):
+    """ Apply Gaussian Blur for the background """
+    return cv2.GaussianBlur(image, (51, 51), 0)
+
 def build_video(data):
+    print("🎬 Building Vertical 9:16 Video...")
     headers = {"Authorization": os.getenv("PEXELS_API_KEY")}
     clips = []
-    # Try to fetch variety. If a keyword fails, it skips to next.
+    
     for kw in data['keywords']:
         try:
             res = requests.get(f"https://api.pexels.com/videos/search?query={kw}&per_page=1", headers=headers).json()
             v_url = res['videos'][0]['video_files'][0]['link']
-            with open(f"{kw}.mp4", 'wb') as f: f.write(requests.get(v_url).content)
-            clips.append(VideoFileClip(f"{kw}.mp4").subclip(0, 5).resize(height=1920))
+            fname = f"{kw}.mp4"
+            with open(fname, 'wb') as f: f.write(requests.get(v_url).content)
+            
+            # ORIENTATION FIX LOGIC
+            raw_clip = VideoFileClip(fname).subclip(0, 5)
+            
+            # 1. Create blurred background (scaled to 1920 height)
+            bg = raw_clip.resize(height=1920)
+            bg = bg.fl_image(blur)
+            bg = bg.crop(x_center=bg.w/2, y_center=bg.h/2, width=1080, height=1920)
+            
+            # 2. Place original landscape clip in the center
+            fg = raw_clip.resize(width=1080)
+            fg = fg.set_position("center")
+            
+            combined = CompositeVideoClip([bg, fg], size=(1080, 1920))
+            clips.append(combined)
         except: continue
 
-    if not clips: raise Exception("Visual Content Fetch Failed")
+    if not clips: raise Exception("No valid visuals found.")
     
     bg_video = concatenate_videoclips(clips, method="compose")
     audio = AudioFileClip("audio.mp3")
     bg_video = bg_video.set_duration(audio.duration)
     
-    # Bold Captions (DejaVu-Sans-Bold is default on GitHub runners)
-    cap = TextClip(data['hook'], fontsize=65, color='yellow', font='DejaVu-Sans-Bold',
-                   method='caption', size=(800, None)).set_duration(audio.duration).set_position('center')
+    # BIG BOLD CAPTIONS
+    cap = TextClip(data['hook'], fontsize=70, color='yellow', font='DejaVu-Sans-Bold',
+                   method='caption', size=(900, None)).set_duration(audio.duration).set_position('center')
     
     final = CompositeVideoClip([bg_video, cap])
-    final.set_audio(audio).write_videofile("output.mp4", fps=24, codec="libx264")
+    final.set_audio(audio).write_videofile("output.mp4", fps=24, codec="libx264", audio_codec="aac")
 
 def upload_all(data):
-    # Instagram Logic
+    # Instagram
     try:
         cl = Client()
         cl.set_settings(json.loads(os.getenv("INSTA_SESSION_JSON")))
@@ -97,7 +115,7 @@ def upload_all(data):
         print("✅ Instagram Success")
     except Exception as e: print(f"❌ IG Error: {e}")
 
-    # YouTube Logic
+    # YouTube
     try:
         creds = Credentials.from_authorized_user_info(json.loads(os.getenv("YOUTUBE_TOKEN_JSON")))
         youtube = build("youtube", "v3", credentials=creds)
