@@ -1,36 +1,26 @@
 import os
-import random
-import requests
 import json
 import asyncio
-import google.generativeai as genai
-from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip, concatenate_videoclips
-import edge_tts
-from instagrapi import Client
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
-from google.oauth2.credentials import Credentials
+from google import genai
+import PIL.Image
+# Fix for MoviePy/Pillow 10+
+if not hasattr(PIL.Image, 'ANTIALIAS'):
+    PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 
-# 1. SETUP & CONFIG
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-3.1-flash-lite-preview')
+# Initialize the new Client
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# 2. DYNAMIC TOOL RESEARCH & SCRIPTING
 def get_daily_topic():
-    # We ask Gemini to act as a researcher to find a trending AI tool
-    prompt = """
-    Find a trending AI tool for students or developers. 
-    Return ONLY a JSON object:
-    {
-      "tool_name": "Name of tool",
-      "hook": "Wait, stop scrolling if you're a BTech student...",
-      "script": "Full 40 second engaging script here...",
-      "keywords": ["coding", "ai", "laptop"],
-      "title": "Best AI for BTech #shorts #ai",
-      "description": "Check the link in bio for the tool!"
-    }
-    """
-    response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
+    prompt = "Find a trending AI tool for students. Return JSON: {'tool_name': '...', 'hook': '...', 'script': '...', 'keywords': [], 'title': '', 'description': ''}"
+    
+    # New 2026 Syntax
+    response = client.models.generate_content(
+        model='gemini-3.1-flash-lite-preview',
+        contents=prompt,
+        config={
+            'response_mime_type': 'application/json',
+        }
+    )
     return json.loads(response.text)
 
 # 3. HUMAN-LIKE VOICE
