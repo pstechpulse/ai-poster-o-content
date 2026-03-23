@@ -6,6 +6,6 @@ requests
 instagrapi
 google-api-python-client
 google-auth-oauthlib
-opencv-python
+opencv-python-headless
 numpy
 Pillow<10.0.0
