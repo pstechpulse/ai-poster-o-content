@@ -109,13 +109,27 @@ def build_video(data, word_timings):
 
 async def run_pipeline():
     try:
+        # 1. Choose mode and get content
         mode = random.choice(["hindi", "global"])
+        print(f"🚀 Running in {mode.upper()} mode...")
         data = get_viral_content(mode)
+        
+        # 2. Generate Voice and Subtitle timings
         timings = await generate_voice_data(data, mode)
+        
+        # 3. Build the actual video file
         build_video(data, timings)
-        # Add your upload_all logic here
-        print("🏁 SUCCESS!")
+        
+        # 4. THE MISSING PIECE: Upload to YT and IG
+        upload_all(data)
+        
+        # 5. Send a copy to your phone
+        send_telegram(message=f"✅ {mode.upper()} Video: {data['tool_name']}", file_path="output.mp4")
+        
+        print("🏁 FULL SUCCESS: Video is live!")
     except Exception as e:
+        # Health check notification
+        send_telegram(message=f"💥 CRASH: {str(e)[:100]}")
         print(f"💥 CRASH: {e}")
 
 if __name__ == "__main__":
