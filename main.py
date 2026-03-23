@@ -5,7 +5,6 @@ import requests
 import time
 import random
 import cv2
-import webvtt
 import numpy as np
 from google import genai
 import PIL.Image
@@ -16,7 +15,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
 
-# 1. PILLOW & MOVIEPY FIXES
+# 1. PILLOW & MOVIEPY COMPATIBILITY
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 
@@ -34,30 +33,27 @@ def send_telegram(message=None, file_path=None):
         else:
             url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={message}"
             requests.get(url)
-    except Exception as e: print(f"TG Error: {e}")
+    except Exception as e: print(f"TG Log: {e}")
 
 def get_daily_topic(mode):
     seed = time.time()
-    # Instruction for Hinglish vs Global English
     lang_task = (
-        "Write in ROMANIZED HINDI (Hinglish) using BTech slang. Do NOT use Devanagari script."
+        "Write in ROMANIZED HINDI (Hinglish) using BTech slang. Use English letters (e.g., 'Yaar ye tool check karo')."
         if mode == "hindi" else 
         "Write in 100% High-Energy Global English. Professional and punchy."
     )
     
     prompt = f"""
     Seed: {seed}. Mode: {mode}. {lang_task}
-    Research and pick ONE unique AI tool. Focus on variety (e.g., Video AI, Coding Agents, Research Tools).
-    DO NOT repeat common tools like ChatGPT. Pick something fresh.
-    
+    Research and pick ONE real, trending AI tool. 
     Return ONLY a JSON object:
     {{
       "tool_name": "Name",
       "hook": "POV: YOUR HOOK HERE",
-      "script": "40s high-energy script with short, punchy sentences.",
-      "keywords": ["tech", "coding", "productivity"],
-      "title": "Best AI for Students #shorts #{mode}",
-      "description": "Check link in bio! #shorts #tech"
+      "script": "40s script. Short sentences.",
+      "keywords": ["tech", "coding", "minimalist"],
+      "title": "Best AI Tool #shorts #{mode}",
+      "description": "Link in bio! #shorts"
     }}
     """
     response = client.models.generate_content(
@@ -67,30 +63,31 @@ def get_daily_topic(mode):
     )
     return json.loads(response.text)
 
-async def generate_voice_and_subs(text, mode):
+async def generate_voice_and_data(text, mode):
     voice = "hi-IN-MadhurNeural" if mode == "hindi" else "en-US-BrianNeural"
     communicate = edge_tts.Communicate(text, voice, rate="+10%")
-    submaker = edge_tts.SubMaker()
     
+    word_timings = []
     with open("audio.mp3", "wb") as f:
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
                 f.write(chunk["data"])
             elif chunk["type"] == "WordBoundary":
-                submaker.feed(chunk)
-                
-    # FIX: Generate SRT and convert to VTT for webvtt-py
-    with open("subs.srt", "w", encoding="utf-8") as f:
-        f.write(submaker.get_srt())
+                # edge-tts returns offset/duration in 100ns units
+                word_timings.append({
+                    "word": chunk["text"],
+                    "start": chunk["offset"] / 10000000,
+                    "end": (chunk["offset"] + chunk["duration"]) / 10000000
+                })
     
-    # Convert SRT to VTT
-    webvtt.from_srt('subs.srt').save('subs.vtt')
+    with open("subs.json", "w", encoding="utf-8") as f:
+        json.dump(word_timings, f)
 
 def blur(image):
     return cv2.GaussianBlur(image, (51, 51), 0)
 
 def build_video(data):
-    print("🎬 Building high-retention vertical video...")
+    print("🎬 Building high-retention 9:16 video...")
     headers = {"Authorization": os.getenv("PEXELS_API_KEY")}
     clips = []
     
@@ -101,10 +98,10 @@ def build_video(data):
             fname = f"{kw}.mp4"
             with open(fname, 'wb') as f: f.write(requests.get(v_url).content)
             
-            raw_clip = VideoFileClip(fname).subclip(0, 5)
-            # Create 9:16 Portrait from 16:9 Landscape
-            bg = raw_clip.resize(height=1920).fl_image(blur).crop(x_center=960, y_center=540, width=1080, height=1920)
-            fg = raw_clip.resize(width=1080).set_position("center")
+            raw = VideoFileClip(fname).subclip(0, 5)
+            # Create vertical 9:16 frame with blurred background
+            bg = raw.resize(height=1920).fl_image(blur).crop(x_center=960, y_center=540, width=1080, height=1920)
+            fg = raw.resize(width=1080).set_position("center")
             clips.append(CompositeVideoClip([bg, fg], size=(1080, 1920)))
         except: continue
 
@@ -112,17 +109,16 @@ def build_video(data):
     audio = AudioFileClip("audio.mp3")
     bg_video = bg_video.set_duration(audio.duration)
 
-    # DYNAMIC WORD-BY-WORD SUBTITLES
-    sub_clips = []
-    vtt = webvtt.read('subs.vtt')
-    for entry in vtt:
-        start = entry.start_in_seconds
-        end = entry.end_in_seconds
+    # ROBUST WORD-BY-WORD CAPTIONS
+    with open("subs.json", "r") as f:
+        word_timings = json.load(f)
         
-        # Word-by-word pop-in
-        txt = TextClip(entry.text.upper(), fontsize=100, color='yellow', stroke_color='black', 
+    sub_clips = []
+    for item in word_timings:
+        # Romanized Hindi or English both work here
+        txt = TextClip(item['word'].upper(), fontsize=110, color='yellow', stroke_color='black', 
                        stroke_width=2, font='DejaVu-Sans-Bold', method='caption', size=(1000, None))
-        txt = txt.set_start(start).set_duration(end - start).set_position('center')
+        txt = txt.set_start(item['start']).set_duration(item['end'] - item['start']).set_position('center')
         sub_clips.append(txt)
 
     final = CompositeVideoClip([bg_video] + sub_clips)
@@ -154,12 +150,11 @@ def upload_all(data):
 
 async def run_pipeline():
     try:
-        # RANDOM STRATEGY SELECTION
         mode = random.choice(["hindi", "global"])
         print(f"🚀 Running in {mode.upper()} mode...")
         
         data = get_daily_topic(mode)
-        await generate_voice_and_subs(data['script'], mode)
+        await generate_voice_and_data(data['script'], mode)
         build_video(data)
         upload_all(data)
         send_telegram(message=f"✅ {mode.upper()} Content: {data['tool_name']}", file_path="output.mp4")
