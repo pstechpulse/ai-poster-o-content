@@ -1,10 +1,11 @@
 google-genai
 moviepy==1.0.3
-Pillow<10.0.0
 edge-tts
+webvtt-py
 requests
 instagrapi
 google-api-python-client
 google-auth-oauthlib
 opencv-python
 numpy
+Pillow<10.0.0
