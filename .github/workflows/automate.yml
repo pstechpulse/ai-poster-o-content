@@ -1,7 +1,9 @@
 name: Ultimate Content Engine
 on:
-  schedule:
-    - cron: '0 3 * * *' # 8:30 AM IST
+ schedule:
+    - cron: '0 3 * * *'  # 8:30 AM IST (Morning)
+    - cron: '0 10 * * *' # 3:30 PM IST (Afternoon break)
+    - cron: '0 16 * * *' # 9:30 PM IST (Prime Time)
   workflow_dispatch:
 
 jobs:
