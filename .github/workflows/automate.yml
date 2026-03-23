@@ -1,4 +1,4 @@
-name: Ultimate Content Engine V4
+name: Ultimate Content Engine V5
 on:
   schedule:
     - cron: '0 3 * * *'  # 8:30 AM IST
@@ -15,10 +15,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y imagemagick ghostscript
-          # The "Master Fix" for invisible subtitles
-          sudo sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/g' /etc/ImageMagick-6/policy.xml
-          sudo sed -i 's/rights="none" pattern="LABEL"/rights="read|write" pattern="LABEL"/g' /etc/ImageMagick-6/policy.xml
-          sudo sed -i 's/rights="none" pattern="CAPTION"/rights="read|write" pattern="CAPTION"/g' /etc/ImageMagick-6/policy.xml
+          # THE NUCLEAR FIX: Removes the security policies that block TextClip
+          sudo sed -i '/<policy domain="coder" rights="none" pattern="\(PDF\|LABEL\|CAPTION\|TEXT\)" \/>/d' /etc/ImageMagick-6/policy.xml
+          sudo sed -i 's/rights="none" pattern="@\*"/rights="read|write" pattern="@\*"/g' /etc/ImageMagick-6/policy.xml
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
