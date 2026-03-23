@@ -1,7 +1,6 @@
 google-genai
 moviepy==1.0.3
 edge-tts
-webvtt-py
 requests
 instagrapi
 google-api-python-client
