@@ -1,0 +1,30 @@
+name: Ultimate Content Engine
+on:
+  schedule:
+    - cron: '0 3 * * *' # 8:30 AM IST
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick # Required for Bold Captions
+          # Fix for ImageMagick security policy
+          sudo sed -i 's/none/read,write/g' /etc/ImageMagick-6/policy.xml
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Install PyDeps
+        run: pip install -r requirements.txt
+      - name: Run Engine
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          INSTA_SESSION_JSON: ${{ secrets.INSTA_SESSION_JSON }}
+          YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+        run: python main.py

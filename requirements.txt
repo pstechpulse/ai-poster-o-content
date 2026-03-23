@@ -1,0 +1,7 @@
+google-generativeai
+moviepy
+edge-tts
+requests
+instagrapi
+google-api-python-client
+google-auth-oauthlib
