@@ -72,11 +72,10 @@ def create_ass_file(word_timings):
 def build_sota_video(has_ss):
     print("🎬 FFmpeg: Building Final Video...")
     
-    # Bottom Gameplay (With raise_for_status to prevent corrupt MP4s)
     gta_url = "https://raw.githubusercontent.com/the-muda-project/video-assets/main/gta_ramp_loop.mp4"
     try:
         r = requests.get(gta_url)
-        r.raise_for_status() # This throws an error if the link is dead
+        r.raise_for_status()
         with open("bottom.mp4", 'wb') as f:
             f.write(r.content)
     except:
@@ -87,13 +86,11 @@ def build_sota_video(has_ss):
         with open("bottom.mp4", 'wb') as f:
             f.write(r_fallback.content)
 
-    # Music
     r_music = requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3")
     r_music.raise_for_status()
     with open("music.mp3", 'wb') as f:
         f.write(r_music.content)
 
-    # Top Visual
     top_input = "-loop 1 -i tool_ss.png" if has_ss else "-i top_fallback.mp4"
     if not has_ss:
         res_t = requests.get("https://api.pexels.com/videos/search?query=matrix+coding&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
@@ -102,7 +99,6 @@ def build_sota_video(has_ss):
         with open("top_fallback.mp4", 'wb') as f:
             f.write(r_top.content)
 
-    # FFmpeg Execution
     video_top = "loop=loop=-1:size=1,scale=1080:960" if has_ss else "scale=1080:960,setsar=1"
     cmd = (
         f'ffmpeg -y {top_input} -i bottom.mp4 -i voice.mp3 -i music.mp3 '
@@ -149,8 +145,25 @@ async def run_pipeline():
     try:
         mode = random.choice(["hindi", "global"])
         prompt = f"Mode: {mode}. Pick a unique AI tool. Return ONLY ONE JSON OBJECT (not a list): {{\n  \"name\": \"...\",\n  \"url\": \"...\",\n  \"script\": \"40s script...\",\n  \"title\": \"...\",\n  \"description\": \"...\"\n}}"
-        res = client.models.generate_content(model='gemini-3.1-flash-lite-preview', contents=prompt, config={'response_mime_type': 'application/json'})
         
+        # --- THE FIX: 3-STRIKE RETRY LOOP FOR BUSY API ---
+        res = None
+        for attempt in range(3):
+            try:
+                res = client.models.generate_content(
+                    model='gemini-3.1-flash-lite-preview', 
+                    contents=prompt, 
+                    config={'response_mime_type': 'application/json'}
+                )
+                break # It worked, break out of the loop
+            except Exception as api_e:
+                if "503" in str(api_e) and attempt < 2:
+                    print(f"⚠️ Gemini API busy. Retrying in 10 seconds... (Attempt {attempt+1}/3)")
+                    time.sleep(10)
+                else:
+                    raise api_e # Re-raise if it fails 3 times
+        # --------------------------------------------------
+
         raw_json = res.text.replace("```json", "").replace("```", "").strip()
         data = json.loads(raw_json)
         
