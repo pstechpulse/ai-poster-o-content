@@ -15,9 +15,7 @@ jobs:
       - name: Install System Dependencies & Fonts
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-liberation libnss3-dev libatk-bridge2.0-0 libxkbcommon0 libgbm-dev fontconfig
-          mkdir -p ~/.fonts
-          curl -L -o ~/.fonts/Montserrat-Black.ttf https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Black.ttf
+          sudo apt-get install -y ffmpeg fonts-liberation fonts-noto fonts-noto-devanagari libnss3-dev libatk-bridge2.0-0 libxkbcommon0 libgbm-dev fontconfig
           fc-cache -f -v
           
       - name: Setup Python
