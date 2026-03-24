@@ -5,8 +5,8 @@ import requests
 import time
 import random
 import subprocess
+import shutil
 from google import genai
-from playwright.async_api import async_playwright
 import edge_tts
 from instagrapi import Client
 from googleapiclient.discovery import build
@@ -32,23 +32,7 @@ def send_telegram(message=None, file_path=None):
         print(f"❌ Telegram Error: {e}")
 
 # --- 2. ASSETS & TIMINGS ---
-async def get_stealth_screenshot(url):
-    print(f"📸 Screenshotting {url}...")
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch()
-            context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-            page = await context.new_page()
-            await page.goto(url, wait_until="networkidle", timeout=60000)
-            await asyncio.sleep(8)
-            await page.screenshot(path="tool_ss.png")
-            await browser.close()
-            return True
-    except:
-        return False
-
 def format_ass_time(seconds):
-    """Generates the EXACT H:MM:SS.cs format required by libass"""
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
     s = int(seconds % 60)
@@ -69,14 +53,13 @@ def create_ass_file(word_timings):
             start = format_ass_time(item['start'])
             end = format_ass_time(item['end'])
             word = item['word'].strip().upper()
-            # THE FIX: Removed the extra '0:' that was breaking the FFmpeg timeline
             f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{word}\n")
 
 # --- 3. VIDEO BUILDER ---
-def build_sota_video(has_ss, word_timings):
-    print("🎬 FFmpeg: Building Final Video...")
+def build_sota_video(word_timings):
+    print("🎬 FFmpeg: Building Final Video (Information Gap Mode)...")
     
-    # 1. Download Font locally so GitHub can't fail to load it
+    # 1. Download Font locally
     os.makedirs("fonts", exist_ok=True)
     if not os.path.exists("fonts/Montserrat-Black.ttf"):
         print("📥 Downloading Custom Font...")
@@ -86,32 +69,46 @@ def build_sota_video(has_ss, word_timings):
 
     create_ass_file(word_timings)
 
-    # 2. Gameplay Fallback check
+    # 2. Bottom Gameplay (Check for local file first)
     if not os.path.exists("gameplay.mp4"):
-        print("⚠️ gameplay.mp4 not found locally! Downloading emergency fallback...")
+        print("📥 Downloading GTA Gameplay Loop...")
         gta_url = "https://raw.githubusercontent.com/the-muda-project/video-assets/main/gta_ramp_loop.mp4"
-        with open("bottom.mp4", 'wb') as f:
-            f.write(requests.get(gta_url).content)
+        try:
+            r = requests.get(gta_url)
+            r.raise_for_status()
+            with open("bottom.mp4", 'wb') as f:
+                f.write(r.content)
+        except:
+            res = requests.get("https://api.pexels.com/videos/search?query=neon+abstract+fast&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
+            with open("bottom.mp4", 'wb') as f:
+                f.write(requests.get(res['videos'][0]['video_files'][0]['link']).content)
     else:
-        # Rename user's gameplay.mp4 to bottom.mp4 to match the command
-        os.rename("gameplay.mp4", "bottom.mp4")
+        shutil.copy("gameplay.mp4", "bottom.mp4")
 
-    # 3. Music & Top Visuals
-    with open("music.mp3", 'wb') as f:
-        f.write(requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3").content)
-
-    top_input = "-loop 1 -i tool_ss.png" if has_ss else "-i top_fallback.mp4"
-    if not has_ss:
-        res_t = requests.get("https://api.pexels.com/videos/search?query=matrix+coding&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
-        with open("top_fallback.mp4", 'wb') as f:
+    # 3. Top Aesthetic B-Roll (Information Gap)
+    print("📥 Fetching Aesthetic B-Roll for Top Half...")
+    queries = ["cyberpunk typing", "matrix coding", "hacker aesthetic", "late night studying dark"]
+    q = random.choice(queries)
+    try:
+        res_t = requests.get(f"https://api.pexels.com/videos/search?query={q}&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
+        with open("top.mp4", 'wb') as f:
+            f.write(requests.get(res_t['videos'][0]['video_files'][0]['link']).content)
+    except:
+        # Emergency absolute fallback
+        res_t = requests.get("https://api.pexels.com/videos/search?query=technology&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
+        with open("top.mp4", 'wb') as f:
             f.write(requests.get(res_t['videos'][0]['video_files'][0]['link']).content)
 
-    # 4. FFmpeg Command (Using fontsdir to guarantee it finds Montserrat)
-    video_top = "loop=loop=-1:size=1,scale=1080:960" if has_ss else "scale=1080:960,setsar=1"
+    # 4. Music
+    r_music = requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3")
+    with open("music.mp3", 'wb') as f:
+        f.write(r_music.content)
+
+    # 5. FFmpeg Command
     cmd = (
-        f'ffmpeg -y {top_input} -i bottom.mp4 -i voice.mp3 -i music.mp3 '
+        f'ffmpeg -y -i top.mp4 -i bottom.mp4 -i voice.mp3 -i music.mp3 '
         f'-filter_complex "'
-        f'[0:v]{video_top}[t]; [1:v]scale=1080:960,setsar=1[b]; [t][b]vstack=inputs=2[v_stack]; '
+        f'[0:v]scale=1080:960,setsar=1[t]; [1:v]scale=1080:960,setsar=1[b]; [t][b]vstack=inputs=2[v_stack]; '
         f'[v_stack]ass=subs.ass:fontsdir=fonts[outv]; '
         f'[2:a]volume=2.0[v_a]; [3:a]volume=0.15[m_a]; [v_a][m_a]amix=inputs=2:duration=first[outa]" '
         f'-map "[outv]" -map "[outa]" -c:v libx264 -t 45 -pix_fmt yuv420p output.mp4'
@@ -120,10 +117,13 @@ def build_sota_video(has_ss, word_timings):
 
 # --- 4. UPLOADER ---
 def upload_all(data):
+    tags_string = " ".join(data.get('tags', ["#tech", "#ai"]))
+    caption = f"{data['title']}\n\n👇 Comment '{data['keyword']}' and I'll send you the link!\n\n{data['description']}\n\n{tags_string}"
+
     try:
         cl = Client()
         cl.set_settings(json.loads(os.getenv("INSTA_SESSION_JSON")))
-        cl.clip_upload("output.mp4", caption=f"{data['title']}\n\n{data['description']}")
+        cl.clip_upload("output.mp4", caption=caption)
         print("✅ IG Success")
     except Exception as e:
         print(f"❌ IG Error: {e}")
@@ -131,13 +131,17 @@ def upload_all(data):
     try:
         creds = Credentials.from_authorized_user_info(json.loads(os.getenv("YOUTUBE_TOKEN_JSON")))
         youtube = build("youtube", "v3", credentials=creds)
+        
+        clean_tags = [tag.replace("#", "") for tag in data.get('tags', ["tech", "ai"])]
+        
         request = youtube.videos().insert(
             part="snippet,status",
             body={
                 "snippet": {
-                    "title": data['title'],
-                    "description": data['description'],
-                    "categoryId": "27"
+                    "title": f"{data['title']} (Comment {data['keyword']})",
+                    "description": caption,
+                    "categoryId": "27",
+                    "tags": clean_tags
                 },
                 "status": {"privacyStatus": "public"}
             },
@@ -152,7 +156,32 @@ def upload_all(data):
 async def run_pipeline():
     try:
         mode = random.choice(["hindi", "global"])
-        prompt = f"Mode: {mode}. Pick a unique AI tool. Return ONLY ONE JSON OBJECT: {{\n  \"name\": \"...\",\n  \"url\": \"...\",\n  \"script\": \"40s script...\",\n  \"title\": \"...\",\n  \"description\": \"...\"\n}}"
+        
+        prompt = f"""
+        Mode: {mode}. You are a ruthless, viral tech creator. Pick a highly useful, niche AI tool for BTech/College students.
+        
+        Write a 40-second script following this framework:
+        1. Hook (0-3s): Controversial take or severe pain-point (e.g., "Your professors are praying you don't find this").
+        2. Agitation (3-10s): Validate the struggle (e.g., "Reading 50-page PDFs is soul-crushing").
+        3. Reveal (10-15s): Drop the AI tool name like a cheat code.
+        4. Application (15-30s): Explain the exact transformation and time saved.
+        5. The Comment Bait CTA (30-40s): NEVER say "link in bio". Say exactly: "Comment the word [SECRET_WORD] and I'll send you the direct link, and drop a follow."
+        
+        CRITICAL RULES:
+        - NO corporate jargon.
+        - Speak casually. If mode is 'hindi', use heavy Hinglish college slang (bhai, jugaad, etc.).
+        
+        Return ONLY ONE JSON OBJECT:
+        {{
+          "name": "Tool Name",
+          "url": "Website URL",
+          "keyword": "ONE uppercase word for them to comment (e.g., HACK, CHEAT, PASS)",
+          "script": "Raw script text...",
+          "title": "Viral Clickbait Title #shorts",
+          "description": "A 2-sentence SEO description.",
+          "tags": ["#techhacks", "#btech", "#studenthacks", "#ai", "#productivity"]
+        }}
+        """
         
         res = None
         for attempt in range(3):
@@ -168,8 +197,6 @@ async def run_pipeline():
         raw_json = res.text.replace("```json", "").replace("```", "").strip()
         data = json.loads(raw_json)
         if isinstance(data, list): data = data[0]
-            
-        has_ss = await get_stealth_screenshot(data['url'])
         
         voice = "hi-IN-MadhurNeural" if mode == "hindi" else "en-US-BrianNeural"
         communicate = edge_tts.Communicate(data['script'], voice, rate="+25%", pitch="+10Hz")
@@ -186,9 +213,9 @@ async def run_pipeline():
                         "end": (chunk["offset"] + chunk["duration"]) / 10000000
                     })
         
-        build_sota_video(has_ss, word_timings)
+        build_sota_video(word_timings)
         upload_all(data)
-        send_telegram(message=f"🏁 SOTA Success: {data['name']}", file_path="output.mp4")
+        send_telegram(message=f"🏁 SOTA Success: {data['name']}\nMode: {mode.upper()}", file_path="output.mp4")
         
     except Exception as e:
         send_telegram(message=f"💥 Crash: {str(e)}")
@@ -196,4 +223,3 @@ async def run_pipeline():
 
 if __name__ == "__main__":
     asyncio.run(run_pipeline())
-        
