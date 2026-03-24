@@ -34,19 +34,13 @@ def send_telegram(message=None, file_path=None):
 # --- 2. THE FAIL-SAFE ENGINE ---
 def get_viral_content(prompt):
     try:
-        print("🚀 Layer 1: Gemini 3.1 Flash Preview...")
-        res = gemini_client.models.generate_content(model='gemini-3.1-flash-preview', contents=prompt, config={'response_mime_type': 'application/json'})
+        print("🚀 Layer 1: Gemini 3.1 Flash Lite Preview...")
+        res = gemini_client.models.generate_content(model='gemini-3.1-flash-lite-preview', contents=prompt, config={'response_mime_type': 'application/json'})
         return json.loads(res.text.replace("```json", "").replace("```", "").strip())
     except Exception as e: print(f"⚠️ Layer 1 Failed: {e}")
 
     try:
-        print("🚀 Layer 2: Gemini 3 Flash Preview...")
-        res = gemini_client.models.generate_content(model='gemini-3-flash-preview', contents=prompt, config={'response_mime_type': 'application/json'})
-        return json.loads(res.text.replace("```json", "").replace("```", "").strip())
-    except Exception as e: print(f"⚠️ Layer 2 Failed: {e}")
-
-    try:
-        print("🚀 Layer 3: Groq Llama 3.3 70B...")
+        print("🚀 Layer 2: Groq Llama 3.3 70B...")
         chat_completion = groq_client.chat.completions.create(messages=[{"role": "user", "content": prompt}], model="llama-3.3-70b-versatile", response_format={"type": "json_object"})
         return json.loads(chat_completion.choices[0].message.content)
     except Exception as e:
@@ -61,6 +55,10 @@ def format_srt_time(seconds):
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 def create_srt_file(word_timings):
+    # Safety net: If TTS failed to return words, add a blank one so FFmpeg doesn't crash on empty SRT
+    if not word_timings:
+        word_timings.append({"word": " ", "start": 0.0, "end": 1.0})
+        
     with open("subs.srt", "w", encoding="utf-8") as f:
         for i, item in enumerate(word_timings):
             start = format_srt_time(item['start'])
@@ -94,17 +92,20 @@ def build_sota_video(word_timings, mode):
     # Random Start Time to prevent duplicate videos
     random_start = random.randint(0, 45)
     
-    # SYSTEM FONT SELECTION (The absolute fix)
+    # SYSTEM FONT SELECTION 
     font_name = "Noto Sans Devanagari" if mode == "hindi" else "Liberation Sans"
     
     # Subtitle Style
     style = f"FontName={font_name},FontSize=28,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=4,Shadow=0,Alignment=5,MarginV=20"
+    
+    # THE FIX: Escape the commas so FFmpeg doesn't destroy the command
+    escaped_style = style.replace(",", "\\,")
 
     cmd = (
         f'ffmpeg -y -ss {random_start} -stream_loop -1 -i bg.mp4 -i voice.mp3 -i music.mp3 '
         f'-filter_complex "'
         f'[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[scaled_bg]; '
-        f'[scaled_bg]subtitles=subs.srt:force_style=\'{style}\'[outv]; '
+        f'[scaled_bg]subtitles=subs.srt:force_style=\'{escaped_style}\'[outv]; '
         f'[1:a]volume=2.0[v_a]; [2:a]volume=0.15[m_a]; [v_a][m_a]amix=inputs=2:duration=first[outa]" '
         f'-map "[outv]" -map "[outa]" -c:v libx264 -t 45 -pix_fmt yuv420p output.mp4'
     )
