@@ -48,14 +48,11 @@ async def get_stealth_screenshot(url):
         return False
 
 def get_local_gameplay():
-    """100% Reliable: Picks a random video from your local 'gameplays' folder"""
     print("🎮 Selecting local gameplay from the vault...")
-    
     if not os.path.exists("gameplays"):
         os.makedirs("gameplays")
         
     videos = [f for f in os.listdir("gameplays") if f.endswith(".mp4")]
-    
     if not videos:
         print("⚠️ No videos found in 'gameplays' folder! Using emergency fallback.")
         res = requests.get("https://api.pexels.com/videos/search?query=matrix+coding&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
@@ -120,33 +117,42 @@ def build_sota_video(data, has_ss, word_timings):
 # --- 4. UPLOADER ---
 def upload_all(data):
     final_caption = f"{data['title']}\n\n{data['description']}\n\nGameplay - yt nocopyrightgameplays"
-    try:
-        cl = Client()
-        cl.set_settings(json.loads(os.getenv("INSTA_SESSION_JSON")))
-        cl.clip_upload("output.mp4", caption=final_caption)
-        print("✅ IG Success")
-    except Exception as e:
-        print(f"❌ IG Error: {e}")
+    
+    # 3-Strike Instagram Retry Loop
+    for attempt in range(3):
+        try:
+            cl = Client()
+            cl.set_settings(json.loads(os.getenv("INSTA_SESSION_JSON")))
+            cl.clip_upload("output.mp4", caption=final_caption)
+            print("✅ IG Success")
+            break
+        except Exception as e:
+            print(f"⚠️ IG Upload Error (Attempt {attempt+1}/3): {e}")
+            time.sleep(10)
 
-    try:
-        creds = Credentials.from_authorized_user_info(json.loads(os.getenv("YOUTUBE_TOKEN_JSON")))
-        youtube = build("youtube", "v3", credentials=creds)
-        request = youtube.videos().insert(
-            part="snippet,status",
-            body={
-                "snippet": {
-                    "title": data['title'],
-                    "description": final_caption,
-                    "categoryId": "27"
+    # 3-Strike YouTube Retry Loop
+    for attempt in range(3):
+        try:
+            creds = Credentials.from_authorized_user_info(json.loads(os.getenv("YOUTUBE_TOKEN_JSON")))
+            youtube = build("youtube", "v3", credentials=creds)
+            request = youtube.videos().insert(
+                part="snippet,status",
+                body={
+                    "snippet": {
+                        "title": data['title'],
+                        "description": final_caption,
+                        "categoryId": "27"
+                    },
+                    "status": {"privacyStatus": "public"}
                 },
-                "status": {"privacyStatus": "public"}
-            },
-            media_body=MediaFileUpload("output.mp4")
-        )
-        request.execute()
-        print("✅ YT Success")
-    except Exception as e:
-        print(f"❌ YT Error: {e}")
+                media_body=MediaFileUpload("output.mp4", chunksize=-1, resumable=True)
+            )
+            request.execute()
+            print("✅ YT Success")
+            break
+        except Exception as e:
+            print(f"⚠️ YT Upload Error (Attempt {attempt+1}/3): {e}")
+            time.sleep(10)
 
 # --- 5. PIPELINE ---
 async def run_pipeline():
@@ -154,14 +160,15 @@ async def run_pipeline():
         mode = random.choice(["hindi", "global"])
         prompt = f"Mode: {mode}. Pick a unique AI tool. Return ONLY ONE JSON OBJECT (not a list): {{\n  \"name\": \"...\",\n  \"url\": \"...\",\n  \"script\": \"40s script...\",\n  \"title\": \"...\",\n  \"description\": \"...\"\n}}"
         
+        # 3-Strike Universal Gemini Retry Loop
         res = None
         for attempt in range(3):
             try:
                 res = client.models.generate_content(model='gemini-3.1-flash-lite-preview', contents=prompt, config={'response_mime_type': 'application/json'})
                 break
             except Exception as api_e:
-                if "503" in str(api_e) and attempt < 2:
-                    print(f"⚠️ API busy. Retrying... ({attempt+1}/3)")
+                if attempt < 2:
+                    print(f"⚠️ Gemini API Network Error. Retrying... ({attempt+1}/3)")
                     time.sleep(10)
                 else:
                     raise api_e
