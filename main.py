@@ -1,146 +1,131 @@
-import os
-import json
-import asyncio
-import requests
-import time
-import random
-import cv2
-import numpy as np
+import os, json, asyncio, requests, time, random, subprocess
 from google import genai
-import PIL.Image
-# MoviePy imports
-from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip, concatenate_videoclips
-# Upload & TTS imports
+from playwright.async_api import async_playwright
+import edge_tts
 from instagrapi import Client
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
-import edge_tts
 
-# --- 1. COMPATIBILITY FIX ---
-if not hasattr(PIL.Image, 'ANTIALIAS'):
-    PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
-
-# Initialize Google GenAI
+# --- 1. CONFIG & TOOLS ---
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# --- 2. HELPERS ---
-def fix_pronunciation(text):
-    """Ensures the AI doesn't sound like a 2012 robot."""
-    replacements = {
-        "VS Code": "V S Code", "AI": "A.I.", "API": "A.P.I.", 
-        "BTech": "B-Tech", "PDF": "P.D.F.", "UI": "U.I.",
-        "GitHub": "Git-Hub", "Python": "Py-thon"
-    }
-    for word, replacement in replacements.items():
-        text = text.replace(word, replacement)
-    return text
-
 def send_telegram(message=None, file_path=None):
-    """The Health Check: Reports success or crashes to your phone."""
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    """Telegram Debugger: Logs the API response so we can fix it."""
+    token, chat_id = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
     if not (token and chat_id): return
     try:
         if file_path:
-            url = f"https://api.telegram.org/bot{token}/sendVideo?chat_id={chat_id}"
+            url = f"https://api.telegram.org/bot{token}/sendVideo"
             with open(file_path, 'rb') as f:
-                requests.post(url, files={'video': f}, data={'caption': message})
+                r = requests.post(url, data={'chat_id': chat_id, 'caption': message}, files={'video': f})
         else:
-            url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={message}"
-            requests.get(url)
-    except Exception as e:
-        print(f"Telegram Error: {e}")
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            r = requests.post(url, data={'chat_id': chat_id, 'text': message})
+        print(f"📡 Telegram Debug: {r.json()}") # This will show in GH Actions logs
+    except Exception as e: print(f"❌ Telegram Error: {e}")
 
-# --- 3. THE ENGINE ---
-def get_viral_content(mode):
-    """Researches tools and generates a scene-by-scene script."""
-    seed_val = str(time.time())
-    lang_val = "ROMANIZED HINDI (Hinglish)" if mode == "hindi" else "High-Energy Global English"
-    
-    # Using standard string to avoid the 'Blue Comment' syntax glitch
-    prompt_template = """
-    Seed: {SEED}. Mode: {MODE}. You are a Viral Tech Content Creator. 
-    Pick a 100% REAL trending AI tool for students. 
-    Return ONLY a JSON object:
-    {
-      "tool_name": "Name",
-      "hook": "3 WORD HOOK",
-      "full_script": "{LANG} script (40s). Fast paced.",
-      "scenes": [
-        {"text": "Part 1", "query": "coding student"},
-        {"text": "Part 2", "query": "cyberpunk blue tech"},
-        {"text": "Part 3", "query": "ai robot"},
-        {"text": "Part 4", "query": "typing fast"},
-        {"text": "Part 5", "query": "student success"}
-      ],
-      "title": "This AI is illegal #shorts #tech",
+async def get_tool_screenshot(url):
+    """Captures a real UI shot of the tool."""
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch()
+            page = await browser.new_page(viewport={'width': 1080, 'height': 1080})
+            await page.goto(url, timeout=60000)
+            await asyncio.sleep(5)
+            await page.screenshot(path="tool_ss.png")
+            await browser.close()
+    except: pass # Fallback if site blocks bots
+
+# --- 2. CONTENT ENGINE ---
+def get_viral_logic(mode):
+    seed = time.time()
+    lang = "ROMANIZED HINDI (Hinglish) with BTech Slang" if mode == "hindi" else "Global High-Energy English"
+    prompt = f"""
+    Seed: {seed}. Mode: {mode}. {lang}. 
+    Pick a trending AI tool. Return JSON:
+    {{
+      "name": "Tool Name", "url": "https://tool.com", 
+      "hook": "POV: YOU FOUND A GOLDMINE",
+      "script": "40s hyper-active script using short sentences.",
+      "title": "This tool is a cheat code #shorts #tech",
       "description": "Link in bio! #shorts"
-    }
+    }}
     """
-    prompt = prompt_template.replace("{SEED}", seed_val).replace("{MODE}", mode).replace("{LANG}", lang_val)
-    
-    res = client.models.generate_content(
-        model='gemini-3.1-flash-lite-preview', 
-        contents=prompt, 
-        config={'response_mime_type': 'application/json'}
-    )
-    
-    # Clean possible markdown backticks
-    clean_json = res.text.replace("```json", "").replace("```", "").strip()
-    return json.loads(clean_json)
+    res = client.models.generate_content(model='gemini-3.1-flash-lite-preview', contents=prompt, config={'response_mime_type': 'application/json'})
+    return json.loads(res.text)
 
-async def generate_voice_data(data, mode):
-    """Generates audio and word-level timestamps for neon subs."""
-    voice = "hi-IN-MadhurNeural" if mode == "hindi" else "en-US-AndrewNeural"
-    clean_script = fix_pronunciation(data['full_script'])
-    communicate = edge_tts.Communicate(clean_script, voice, rate="+15%", pitch="+5Hz")
-    
-    word_timings = []
-    with open("audio.mp3", "wb") as f:
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                f.write(chunk["data"])
-            elif chunk["type"] == "WordBoundary":
-                word_timings.append({
-                    "word": chunk["text"],
-                    "start": chunk["offset"] / 10000000,
-                    "end": (chunk["offset"] + chunk["duration"]) / 10000000
-                })
-    return word_timings
+async def generate_audio(text, mode):
+    voice = "hi-IN-MadhurNeural" if mode == "hindi" else "en-US-BrianNeural"
+    communicate = edge_tts.Communicate(text, voice, rate="+25%", pitch="+10Hz")
+    await communicate.save("voice.mp3")
 
-def build_video(data, word_timings):
-    """Assembles scene-matched clips and renders neon green subtitles."""
-    print("🎬 Constructing Video...")
+# --- 3. VIDEO ENGINE (FFMPEG) ---
+def build_sota_video(data):
+    print("🎬 FFmpeg: Creating Split-Screen Masterpiece...")
     headers = {"Authorization": os.getenv("PEXELS_API_KEY")}
-    audio = AudioFileClip("audio.mp3")
     
-    final_clips = []
-    duration_per = audio.duration / len(data['scenes'])
+    # Download Gameplay (Bottom)
+    gp_res = requests.get("https://api.pexels.com/videos/search?query=minecraft+parkour&per_page=1", headers=headers).json()
+    with open("bottom.mp4", 'wb') as f: f.write(requests.get(gp_res['videos'][0]['video_files'][0]['link']).content)
     
-    for i, scene in enumerate(data['scenes']):
-        try:
-            # Orientation=portrait ensures 9:16 content
-            res = requests.get(
-                f"https://api.pexels.com/videos/search?query={scene['query']}&per_page=1&orientation=portrait", 
-                headers=headers
-            ).json()
-            
-            v_url = res['videos'][0]['video_files'][0]['link']
-            fname = f"scene_{i}.mp4"
-            with open(fname, 'wb') as f:
-                f.write(requests.get(v_url).content)
-            
-            clip = VideoFileClip(fname).subclip(0, duration_per).resize(height=1920)
-            clip = clip.crop(x_center=clip.w/2, y_center=clip.h/2, width=1080, height=1920)
-            final_clips.append(clip)
-        except Exception as e:
-            print(f"⚠️ Clip Download Error: {e}")
-            continue
+    # Download Background (Top)
+    top_res = requests.get("https://api.pexels.com/videos/search?query=futuristic+tech&per_page=1", headers=headers).json()
+    with open("top.mp4", 'wb') as f: f.write(requests.get(top_res['videos'][0]['video_files'][0]['link']).content)
 
-    if not final_clips:
-        raise Exception("Zero visual clips found.")
+    # Download No-Copyright Music (Lo-fi/Phonk)
+    music_url = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" # Placeholder, replace with your preferred CDN
+    with open("music.mp3", 'wb') as f: f.write(requests.get(music_url).content)
 
+    # THE NUCLEAR FFMPEG FILTER:
+    # 1. Scales and stacks videos
+    # 2. Burns text with a heavy background box (Stylized)
+    # 3. Mixes Voice (Loud) + Music (Quiet)
+    cmd = (
+        f'ffmpeg -y -i top.mp4 -i bottom.mp4 -i voice.mp3 -i music.mp3 '
+        f'-filter_complex "'
+        f'[0:v]scale=1080:960,setsar=1[t]; '
+        f'[1:v]scale=1080:960,setsar=1[b]; '
+        f'[t][b]vstack=inputs=2[v]; '
+        f'[v]drawtext=text=\'{data["hook"]}\':fontcolor=white:fontsize=80:x=(w-text_w)/2:y=(h-text_h)/2:'
+        f'box=1:boxcolor=black@0.7:boxborderw=20:fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf[outv]; '
+        f'[2:a]volume=1.5[v_a]; [3:a]volume=0.15[m_a]; [v_a][m_a]amix=inputs=2:duration=first[outa]" '
+        f'-map "[outv]" -map "[outa]" -c:v libx264 -t 45 -pix_fmt yuv420p output.mp4'
+    )
+    subprocess.run(cmd, shell=True)
+
+# --- 4. UPLOADER ---
+def upload_all(data):
+    try:
+        cl = Client()
+        cl.set_settings(json.loads(os.getenv("INSTA_SESSION_JSON")))
+        cl.clip_upload("output.mp4", caption=f"{data['title']}\n\n{data['description']}")
+        print("✅ IG Success")
+    except Exception as e: print(f"❌ IG Error: {e}")
+
+    try:
+        creds = Credentials.from_authorized_user_info(json.loads(os.getenv("YOUTUBE_TOKEN_JSON")))
+        youtube = build("youtube", "v3", credentials=creds)
+        youtube.videos().insert(part="snippet,status", body={"snippet": {"title": data['title'], "description": data['description'], "categoryId": "27"}, "status": {"privacyStatus": "public"}}, media_body=MediaFileUpload("output.mp4")).execute()
+        print("✅ YT Success")
+    except Exception as e: print(f"❌ YT Error: {e}")
+
+# --- 5. RUNNER ---
+async def run_pipeline():
+    try:
+        mode = random.choice(["hindi", "global"])
+        data = get_viral_logic(mode)
+        await get_tool_screenshot(data['url']) # Now actually works
+        await generate_audio(data['script'], mode)
+        build_sota_video(data)
+        upload_all(data)
+        send_telegram(message=f"✅ {mode.upper()} Video: {data['name']}", file_path="output.mp4")
+    except Exception as e:
+        send_telegram(message=f"💥 CRASH: {str(e)[:100]}")
+        print(f"CRASH: {e}")
+
+if __name__ == "__main__":
+    asyncio.run(run_pipeline())
     bg_video = concatenate_videoclips(final_clips, method="compose").set_duration(audio.duration)
 
     # Neon Green Word-by-Word Subtitles
