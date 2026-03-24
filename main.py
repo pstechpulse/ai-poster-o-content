@@ -46,30 +46,44 @@ def get_viral_content(prompt):
     except Exception as e:
         raise Exception(f"❌ ALL LAYERS FAILED: {e}")
 
-# --- 3. SRT & VIDEO BUILDER ---
-def format_srt_time(seconds):
-    ms = int((seconds % 1) * 1000)
-    s = int(seconds)
-    m, s = divmod(s, 60)
-    h, m = divmod(m, 60)
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+# --- 3. ASS & VIDEO BUILDER ---
+def format_ass_time(seconds):
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    cs = int((seconds % 1) * 100)
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
-def create_srt_file(word_timings):
-    # Safety net: If TTS failed to return words, add a blank one so FFmpeg doesn't crash on empty SRT
+def create_ass_file(word_timings, mode):
+    # Selects the system fonts we installed on the Ubuntu runner
+    font_name = "Noto Sans Devanagari" if mode == "hindi" else "Liberation Sans"
+    
+    header = (
+        "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        # Style definition: Yellow text, black outline, perfectly sized
+        f"Style: Default,{font_name},110,&H0000FFFF,&H0000FFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,6,0,5,10,10,10,1\n\n"
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+    
+    # Safety check for empty TTS
     if not word_timings:
         word_timings.append({"word": " ", "start": 0.0, "end": 1.0})
         
-    with open("subs.srt", "w", encoding="utf-8") as f:
-        for i, item in enumerate(word_timings):
-            start = format_srt_time(item['start'])
-            end = format_srt_time(item['end'])
+    with open("subs.ass", "w", encoding='utf-8') as f:
+        f.write(header)
+        for item in word_timings:
+            start, end = format_ass_time(item['start']), format_ass_time(item['end'])
             word = item['word'].strip().upper()
-            f.write(f"{i+1}\n{start} --> {end}\n{word}\n\n")
+            # {\an5} mathematically forces the text to the dead center of the screen
+            # {\b1} forces bold text
+            f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{{\\an5\\b1}}{word}\n")
 
 def build_sota_video(word_timings, mode):
     print(f"🎬 FFmpeg: Building Final Video for mode: {mode}...")
     
-    create_srt_file(word_timings)
+    create_ass_file(word_timings, mode)
 
     # SELECT FROM VAULT
     vault_path = "gameplays"
@@ -89,23 +103,14 @@ def build_sota_video(word_timings, mode):
     # Music
     with open("music.mp3", 'wb') as f: f.write(requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3").content)
 
-    # Random Start Time to prevent duplicate videos
     random_start = random.randint(0, 45)
     
-    # SYSTEM FONT SELECTION 
-    font_name = "Noto Sans Devanagari" if mode == "hindi" else "Liberation Sans"
-    
-    # Subtitle Style
-    style = f"FontName={font_name},FontSize=28,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=4,Shadow=0,Alignment=5,MarginV=20"
-    
-    # THE FIX: Escape the commas so FFmpeg doesn't destroy the command
-    escaped_style = style.replace(",", "\\,")
-
+    # Notice how incredibly clean this FFmpeg command is now. No font styles, no commas.
     cmd = (
         f'ffmpeg -y -ss {random_start} -stream_loop -1 -i bg.mp4 -i voice.mp3 -i music.mp3 '
         f'-filter_complex "'
         f'[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[scaled_bg]; '
-        f'[scaled_bg]subtitles=subs.srt:force_style=\'{escaped_style}\'[outv]; '
+        f'[scaled_bg]ass=subs.ass[outv]; '
         f'[1:a]volume=2.0[v_a]; [2:a]volume=0.15[m_a]; [v_a][m_a]amix=inputs=2:duration=first[outa]" '
         f'-map "[outv]" -map "[outa]" -c:v libx264 -t 45 -pix_fmt yuv420p output.mp4'
     )
