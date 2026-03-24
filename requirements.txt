@@ -5,4 +5,4 @@ instagrapi
 google-api-python-client
 google-auth-oauthlib
 playwright
-numpy
+moviepy==1.0.3
