@@ -49,25 +49,19 @@ def get_viral_content(prompt):
 
 # --- 3. DIRECT DRAWTEXT RENDERER ---
 def sanitize_word(w):
-    # This strips ALL punctuation. No commas or quotes can break FFmpeg ever again.
+    # Strips all punctuation so FFmpeg command never breaks
     clean = re.sub(r'[^\w\s]', '', w)
     return clean.strip().upper()
 
 def build_sota_video(word_timings, mode):
     print(f"🎬 FFmpeg: Building Final Video via DIRECT DRAWTEXT for mode: {mode}...")
 
-    # 1. DOWNLOAD FONTS LOCALLY 
-    font_en = os.path.abspath("font_en.ttf")
-    font_hi = os.path.abspath("font_hi.ttf")
-    
-    if not os.path.exists(font_en):
-        print("📥 Downloading English Font...")
-        with open(font_en, "wb") as f: f.write(requests.get("https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Black.ttf").content)
-    if not os.path.exists(font_hi):
-        print("📥 Downloading Hindi Font...")
-        with open(font_hi, "wb") as f: f.write(requests.get("https://github.com/google/fonts/raw/main/ofl/notosansdevanagari/NotoSansDevanagari-Black.ttf").content)
+    # 1. DOWNLOAD FONT LOCALLY (Only English font needed now)
+    font_path = os.path.abspath("font_main.ttf")
+    if not os.path.exists(font_path):
+        print("📥 Downloading Main Font...")
+        with open(font_path, "wb") as f: f.write(requests.get("https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Black.ttf").content)
         
-    font_path = font_hi if mode == "hindi" else font_en
     font_path = font_path.replace('\\', '/')
 
     # 2. SELECT FROM VAULT
@@ -93,14 +87,13 @@ def build_sota_video(word_timings, mode):
     for w in word_timings:
         word = sanitize_word(w['word'])
         if not word: continue
-        # Paint instruction: Dead center, Yellow, Size 130, Black Border width 8
+        # Dead center, Yellow, Size 130, Black Border width 8
         dt = f"drawtext=fontfile='{font_path}':text='{word}':enable='between(t,{w['start']},{w['end']})':x=(w-text_w)/2:y=(h-text_h)/2:fontsize=130:fontcolor=yellow:borderw=8:bordercolor=black"
         drawtexts.append(dt)
         
     if not drawtexts:
         drawtexts.append(f"drawtext=fontfile='{font_path}':text='':enable='between(t,0,1)':x=0:y=0")
         
-    # Chain all the drawtext commands together into one massive stream
     video_chain = f"[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,{','.join(drawtexts)}[outv];\n"
     audio_chain = "[1:a]volume=2.0[v_a]; [2:a]volume=0.15[m_a]; [v_a][m_a]amix=inputs=2:duration=first[outa]"
     
@@ -147,29 +140,33 @@ async def run_pipeline():
         Framework: Hook(0-3s), Agitation(3-10s), Reveal(10-15s), Application(15-30s), CTA: "Comment [SECRET_WORD]".
         JSON Format: {{"name":"", "url":"", "keyword":"", "script":"", "title":"", "description":"", "tags":[]}}
         No corporate jargon. Slang allowed.
+        CRITICAL RULES FOR SCRIPT:
+        - If mode is hindi, write in English but use heavy Indian college slang (bhai, jugaad, yaar).
+        - ALWAYS spell Hindi slang phonetically to avoid English mispronunciation (e.g., use 'neeche' instead of 'niche', 'ussey' instead of 'use', 'kaise' instead of 'kese').
         """
         
         data = get_viral_content(prompt)
-        voice = "hi-IN-MadhurNeural" if mode == "hindi" else "en-US-BrianNeural"
         
-        # 1. Just save the MP3. Ignore Microsoft's broken WebSockets.
+        # THE FIX: Indian English Voice (Understands Roman Hindi perfectly, doesn't try to force Devanagari)
+        voice = "en-IN-PrabhatNeural" if mode == "hindi" else "en-US-BrianNeural"
+        
         print("🎙️ Generating Voice...")
         communicate = edge_tts.Communicate(data['script'], voice, rate="+25%", pitch="+10Hz")
         await communicate.save("voice.mp3")
         
-        # 2. Let Groq AI listen to the file and give us perfect timestamps
         print("🧠 Using Groq Whisper API for Foolproof Timestamps...")
         with open("voice.mp3", "rb") as f:
             transcription = groq_client.audio.transcriptions.create(
                 file=("voice.mp3", f.read()),
                 model="whisper-large-v3",
+                prompt=data['script'], # THIS IS THE CHEAT CODE: Forces Whisper to use the exact spellings from the LLM
                 response_format="verbose_json",
-                timestamp_granularities=["word"]
+                timestamp_granularities=["word"],
+                language="en" # Forces A-Z alphabet. No boxes ever again.
             )
         
         word_timings = []
         for w in transcription.words:
-            # Safely handle both dict and object access depending on Groq's return style
             word_text = w['word'] if isinstance(w, dict) else w.word
             start_time = w['start'] if isinstance(w, dict) else w.start
             end_time = w['end'] if isinstance(w, dict) else w.end
