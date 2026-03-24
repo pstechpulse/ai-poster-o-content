@@ -11,18 +11,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+      
       - name: Install System Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-liberation libnss3-dev libatk-bridge2.0-0 libxkbcommon0 libgbm-dev
+          
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+          
       - name: Install PyDeps
         run: |
           pip install -r requirements.txt
-          playwright install chromium
+          
       - name: Run Engine
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
