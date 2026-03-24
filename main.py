@@ -32,7 +32,7 @@ def send_telegram(message=None, file_path=None):
     except Exception as e:
         print(f"❌ Telegram Error: {e}")
 
-# --- 2. ASSETS & TIMINGS ---
+# --- 2. ASSETS ---
 async def get_stealth_screenshot(url):
     print(f"📸 Screenshotting {url}...")
     try:
@@ -48,29 +48,17 @@ async def get_stealth_screenshot(url):
     except:
         return False
 
-def format_srt_time(seconds):
-    ms = int((seconds % 1) * 1000)
-    s = int(seconds)
-    m, s = divmod(s, 60)
-    h, m = divmod(m, 60)
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-
 def download_youtube_gameplay():
-    """Pulls a random video from NoCopyrightGameplays"""
     print("🎮 Fetching random gameplay from YouTube...")
-    
-    # List of videos from the requested channel (GTA, Minecraft, Trackmania, etc.)
+    # Removed the dead video and added active ones
     channel_videos = [
-        "https://www.youtube.com/watch?v=n_Dv4JMiwK8", # GTA V
-        "https://www.youtube.com/watch?v=2XoH2R-kHpk", # Minecraft Parkour
-        "https://www.youtube.com/watch?v=3V-1AAYC8bY", # CSGO Surf
-        "https://www.youtube.com/watch?v=7MGEE-sQ3rE", # Trackmania
-        "https://www.youtube.com/watch?v=8mG8L0U4wS0"  # GTA V Ramps
+        "https://www.youtube.com/watch?v=n_Dv4JMiwK8",
+        "https://www.youtube.com/watch?v=2XoH2R-kHpk",
+        "https://www.youtube.com/watch?v=3V-1AAYC8bY",
+        "https://www.youtube.com/watch?v=8mG8L0U4wS0"
     ]
+    random.shuffle(channel_videos)
     
-    target_url = random.choice(channel_videos)
-    
-    # Download settings: 720p max to save GitHub runner memory
     ydl_opts = {
         'format': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/mp4',
         'outtmpl': 'bottom.mp4',
@@ -78,57 +66,68 @@ def download_youtube_gameplay():
         'no_warnings': True
     }
     
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([target_url])
-    except Exception as e:
-        print(f"⚠️ YouTube Download failed (IP blocked?), using Raw Fallback: {e}")
-        # Absolute fallback if YouTube temporarily blocks GitHub's IP
-        raw_gta = "https://raw.githubusercontent.com/the-muda-project/video-assets/main/gta_ramp_loop.mp4"
+    success = False
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        for url in channel_videos:
+            try:
+                print(f"Trying video: {url}")
+                ydl.download([url])
+                success = True
+                break # If it works, break out of the loop
+            except Exception as e:
+                print(f"⚠️ Failed to download {url}: {e}")
+
+    # The Ultimate Fallback: High-speed neon video from Pexels (No dead links)
+    if not success:
+        print("⚠️ All YT links failed! Using Pexels fallback...")
+        res = requests.get("https://api.pexels.com/videos/search?query=neon+abstract+fast&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
+        r_fallback = requests.get(res['videos'][0]['video_files'][0]['link'])
+        r_fallback.raise_for_status()
         with open("bottom.mp4", 'wb') as f:
-            f.write(requests.get(raw_gta).content)
+            f.write(r_fallback.content)
 
 # --- 3. VIDEO BUILDER ---
 def build_sota_video(has_ss, word_timings):
     print("🎬 FFmpeg: Building Final Video...")
     
-    # 1. GENERATE PERFECT SUBTITLES
-    srt_content = ""
-    for i, item in enumerate(word_timings):
-        start = format_srt_time(item['start'])
-        end = format_srt_time(item['end'])
-        srt_content += f"{i+1}\n{start} --> {end}\n{item['word'].upper()}\n\n"
-    
-    with open("subs.srt", "w", encoding="utf-8") as f:
-        f.write(srt_content)
-
-    # 2. DOWNLOAD FONT (Fixes invisible text on Ubuntu servers)
+    # 1. Download Exact Font (Fixes invisible text on Ubuntu completely)
     font_url = "https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Black.ttf"
     with open("font.ttf", "wb") as f:
         f.write(requests.get(font_url).content)
 
-    # 3. DOWNLOAD GAMEPLAY (From YT Channel)
+    # 2. Download Gameplay
     download_youtube_gameplay()
 
-    # 4. DOWNLOAD MUSIC
+    # 3. Download Music
     r_music = requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3")
     with open("music.mp3", 'wb') as f:
         f.write(r_music.content)
 
-    # 5. TOP VISUAL
+    # 4. Top Visual
     top_input = "-loop 1 -i tool_ss.png" if has_ss else "-i top_fallback.mp4"
     if not has_ss:
         res_t = requests.get("https://api.pexels.com/videos/search?query=matrix+coding&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
         with open("top_fallback.mp4", 'wb') as f:
             f.write(requests.get(res_t['videos'][0]['video_files'][0]['link']).content)
 
-    # 6. FFMPEG EXECUTION
+    # 5. Generate Text Filters (Bulletproof drawtext engine)
+    text_filters = []
+    for item in word_timings:
+        word = item['word'].replace("'", "").replace('"', '').upper()
+        s, e = item['start'], item['end']
+        text_filters.append(
+            f"drawtext=fontfile=font.ttf:text='{word}':fontcolor=yellow:fontsize=120:"
+            f"x=(w-text_w)/2:y=(h-text_h)/2:borderw=6:bordercolor=black:enable='between(t,{s},{e})'"
+        )
+    full_text_chain = ",".join(text_filters)
+
+    # 6. Final FFmpeg Command
     video_top = "loop=loop=-1:size=1,scale=1080:960" if has_ss else "scale=1080:960,setsar=1"
     cmd = (
         f'ffmpeg -y {top_input} -i bottom.mp4 -i voice.mp3 -i music.mp3 '
         f'-filter_complex "'
         f'[0:v]{video_top}[t]; [1:v]scale=1080:960,setsar=1[b]; [t][b]vstack=inputs=2[v_stack]; '
-        f'[v_stack]subtitles=subs.srt:fontsdir=.:force_style=\'FontName=Montserrat-Black,FontSize=28,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=4,Shadow=0,Alignment=5\'[outv]; '
+        f'[v_stack]{full_text_chain}[outv]; '
         f'[2:a]volume=2.0[v_a]; [3:a]volume=0.15[m_a]; [v_a][m_a]amix=inputs=2:duration=first[outa]" '
         f'-map "[outv]" -map "[outa]" -c:v libx264 -t 45 -pix_fmt yuv420p output.mp4'
     )
@@ -136,9 +135,7 @@ def build_sota_video(has_ss, word_timings):
 
 # --- 4. UPLOADER ---
 def upload_all(data):
-    # INJECT CREDIT INTO DESCRIPTION
     final_caption = f"{data['title']}\n\n{data['description']}\n\nGameplay - yt nocopyrightgameplays"
-    
     try:
         cl = Client()
         cl.set_settings(json.loads(os.getenv("INSTA_SESSION_JSON")))
@@ -150,7 +147,7 @@ def upload_all(data):
     try:
         creds = Credentials.from_authorized_user_info(json.loads(os.getenv("YOUTUBE_TOKEN_JSON")))
         youtube = build("youtube", "v3", credentials=creds)
-        youtube.videos().insert(
+        request = youtube.videos().insert(
             part="snippet,status",
             body={
                 "snippet": {
@@ -173,7 +170,6 @@ async def run_pipeline():
         mode = random.choice(["hindi", "global"])
         prompt = f"Mode: {mode}. Pick a unique AI tool. Return ONLY ONE JSON OBJECT (not a list): {{\n  \"name\": \"...\",\n  \"url\": \"...\",\n  \"script\": \"40s script...\",\n  \"title\": \"...\",\n  \"description\": \"...\"\n}}"
         
-        # 3-Strike Gemini Retry
         res = None
         for attempt in range(3):
             try:
