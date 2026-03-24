@@ -12,22 +12,22 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      
-      - name: Install System Dependencies
+      - name: Install System Dependencies & Fonts
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-liberation libnss3-dev libatk-bridge2.0-0 libxkbcommon0 libgbm-dev
+          sudo apt-get install -y ffmpeg fonts-liberation libnss3-dev libatk-bridge2.0-0 libxkbcommon0 libgbm-dev fontconfig
+          mkdir -p ~/.fonts
+          curl -L -o ~/.fonts/Montserrat-Black.ttf https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Black.ttf
+          fc-cache -f -v
           
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
           
-          
       - name: Install PyDeps
         run: |
           pip install -r requirements.txt
-          
           
       - name: Run Engine
         env:

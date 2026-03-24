@@ -15,14 +15,12 @@ from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
 
 # --- 1. SETUP CLIENTS ---
-# Using the specific model names you provided
 gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 def send_telegram(message=None, file_path=None):
     token, chat_id = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
-    if not token or not chat_id:
-        return
+    if not token or not chat_id: return
     try:
         url = f"https://api.telegram.org/bot{token}/"
         if file_path and os.path.exists(file_path):
@@ -35,40 +33,21 @@ def send_telegram(message=None, file_path=None):
 
 # --- 2. THE FAIL-SAFE ENGINE ---
 def get_viral_content(prompt):
-    """Triple-Layer Fallback with the EXACT model names provided"""
-    
-    # LAYER 1: Gemini 3.1 Flash Preview
     try:
-        print("🚀 Layer 1: Trying Gemini 3.1 Flash Preview...")
-        res = gemini_client.models.generate_content(
-            model='gemini-3.1-flash-preview', 
-            contents=prompt, 
-            config={'response_mime_type': 'application/json'}
-        )
+        print("🚀 Layer 1: Gemini 3.1 Flash Preview...")
+        res = gemini_client.models.generate_content(model='gemini-3.1-flash-preview', contents=prompt, config={'response_mime_type': 'application/json'})
         return json.loads(res.text.replace("```json", "").replace("```", "").strip())
-    except Exception as e:
-        print(f"⚠️ Layer 1 Failed: {e}")
+    except Exception as e: print(f"⚠️ Layer 1 Failed: {e}")
 
-    # LAYER 2: Gemini 3 Flash Preview
     try:
-        print("🚀 Layer 2: Trying Gemini 3 Flash Preview...")
-        res = gemini_client.models.generate_content(
-            model='gemini-3-flash-preview', 
-            contents=prompt, 
-            config={'response_mime_type': 'application/json'}
-        )
+        print("🚀 Layer 2: Gemini 3 Flash Preview...")
+        res = gemini_client.models.generate_content(model='gemini-3-flash-preview', contents=prompt, config={'response_mime_type': 'application/json'})
         return json.loads(res.text.replace("```json", "").replace("```", "").strip())
-    except Exception as e:
-        print(f"⚠️ Layer 2 Failed: {e}")
+    except Exception as e: print(f"⚠️ Layer 2 Failed: {e}")
 
-    # LAYER 3: Groq Llama 3.3 70B
     try:
-        print("🚀 Layer 3: Trying Groq Llama 3.3 70B...")
-        chat_completion = groq_client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model="llama-3.3-70b-versatile",
-            response_format={"type": "json_object"}
-        )
+        print("🚀 Layer 3: Groq Llama 3.3 70B...")
+        chat_completion = groq_client.chat.completions.create(messages=[{"role": "user", "content": prompt}], model="llama-3.3-70b-versatile", response_format={"type": "json_object"})
         return json.loads(chat_completion.choices[0].message.content)
     except Exception as e:
         raise Exception(f"❌ ALL LAYERS FAILED: {e}")
@@ -86,7 +65,7 @@ def create_ass_file(word_timings):
         "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n"
         "[V4+ Styles]\n"
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        "Style: Default,Montserrat Black,110,&H0000FFFF,&H0000FFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,6,0,5,10,10,10,1\n\n"
+        "Style: Default,Montserrat,110,&H0000FFFF,&H0000FFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,6,0,5,10,10,10,1\n\n"
         "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
     with open("subs.ass", "w", encoding='utf-8') as f:
@@ -96,55 +75,43 @@ def create_ass_file(word_timings):
             f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{{\\b1}}{item['word'].strip().upper()}\n")
 
 def build_sota_video(word_timings):
-    print("🎬 FFmpeg: Building Final Video...")
+    print("🎬 FFmpeg: Building Full-Screen Final Video...")
     
-    # 1. Font setup (Using absolute path for FFmpeg reliability)
-    font_dir = os.path.join(os.getcwd(), "fonts")
+    font_dir = os.path.abspath("fonts")
     font_path = os.path.join(font_dir, "Montserrat-Black.ttf")
     os.makedirs(font_dir, exist_ok=True)
-    
     if not os.path.exists(font_path):
-        print("📥 Downloading Custom Font...")
+        print("📥 Downloading Custom Font to local dir...")
         r_font = requests.get("https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Black.ttf")
-        with open(font_path, "wb") as f:
-            f.write(r_font.content)
+        with open(font_path, "wb") as f: f.write(r_font.content)
 
     create_ass_file(word_timings)
 
-    # 2. SELECT FROM VAULT (The Fix for 'moov atom' / dead links)
+    # SELECT FROM VAULT (Full Screen Gameplay)
     vault_path = "gameplays"
     if os.path.exists(vault_path) and os.listdir(vault_path):
         all_videos = [f for f in os.listdir(vault_path) if f.endswith(".mp4")]
         if all_videos:
             chosen = random.choice(all_videos)
             print(f"📦 Pulling from Vault: {chosen}")
-            shutil.copy(os.path.join(vault_path, chosen), "bottom.mp4")
+            shutil.copy(os.path.join(vault_path, chosen), "bg.mp4")
         else:
-            raise Exception("VAULT EMPTY: Run your local download script first!")
+            raise Exception("VAULT EMPTY: Upload MP4s to 'gameplays' folder!")
     else:
-        # Emergency download only if vault is missing
         print("⚠️ Vault not found! Attempting emergency download...")
         gta = requests.get("https://raw.githubusercontent.com/the-muda-project/video-assets/main/gta_ramp_loop.mp4")
-        with open("bottom.mp4", 'wb') as f:
-            f.write(gta.content)
+        with open("bg.mp4", 'wb') as f: f.write(gta.content)
         
-    # 3. Top B-Roll
-    q = random.choice(["cyberpunk typing", "matrix coding", "dark academic study"])
-    res_t = requests.get(f"https://api.pexels.com/videos/search?query={q}&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
-    with open("top.mp4", 'wb') as f:
-        f.write(requests.get(res_t['videos'][0]['video_files'][0]['link']).content)
-    
-    # 4. Music
-    with open("music.mp3", 'wb') as f:
-        f.write(requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3").content)
+    # Music
+    with open("music.mp3", 'wb') as f: f.write(requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3").content)
 
-    # 5. FFmpeg Command
+    # FFmpeg Command (Clean, Full Screen 9:16 Crop, Subtitles on top)
     cmd = (
-        f'ffmpeg -y -stream_loop -1 -i top.mp4 -stream_loop -1 -i bottom.mp4 -i voice.mp3 -i music.mp3 '
+        f'ffmpeg -y -stream_loop -1 -i bg.mp4 -i voice.mp3 -i music.mp3 '
         f'-filter_complex "'
-        f'[0:v]scale=1080:960,setsar=1[t]; [1:v]scale=1080:960,setsar=1[b]; [t][b]vstack=inputs=2[v_stack]; '
-        f'[v_stack]ass=subs.ass:fontsdir={font_dir}[outv]; '
-        f'[2:a]volume=2.0[v_a]; [3:a]volume=0.15[m_a]; [v_a][m_a]amix=inputs=2:duration=first[outa]" '
+        f'[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[scaled_bg]; '
+        f'[scaled_bg]ass=subs.ass:fontsdir={font_dir}[outv]; '
+        f'[1:a]volume=2.0[v_a]; [2:a]volume=0.15[m_a]; [v_a][m_a]amix=inputs=2:duration=first[outa]" '
         f'-map "[outv]" -map "[outa]" -c:v libx264 -t 45 -pix_fmt yuv420p output.mp4'
     )
     subprocess.run(cmd, shell=True)
@@ -157,8 +124,7 @@ def upload_all(data):
         cl.set_settings(json.loads(os.getenv("INSTA_SESSION_JSON")))
         cl.clip_upload("output.mp4", caption=caption)
         print("✅ IG Success")
-    except Exception as e:
-        print(f"❌ IG Error: {e}")
+    except Exception as e: print(f"❌ IG Error: {e}")
 
     try:
         creds = Credentials.from_authorized_user_info(json.loads(os.getenv("YOUTUBE_TOKEN_JSON")))
@@ -170,8 +136,7 @@ def upload_all(data):
             media_body=MediaFileUpload("output.mp4")
         ).execute()
         print("✅ YT Success")
-    except Exception as e:
-        print(f"❌ YT Error: {e}")
+    except Exception as e: print(f"❌ YT Error: {e}")
 
 # --- 5. MAIN ---
 async def run_pipeline():
@@ -191,8 +156,7 @@ async def run_pipeline():
         word_timings = []
         with open("voice.mp3", "wb") as f:
             async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    f.write(chunk["data"])
+                if chunk["type"] == "audio": f.write(chunk["data"])
                 elif chunk["type"] == "WordBoundary":
                     word_timings.append({"word": chunk["text"], "start": chunk["offset"]/10000000, "end": (chunk["offset"]+chunk["duration"])/10000000})
         
