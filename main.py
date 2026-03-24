@@ -32,13 +32,13 @@ def send_telegram(message=None, file_path=None):
 
 # --- 2. THE FAIL-SAFE ENGINE ---
 def get_viral_content(prompt):
-    """Triple-Layer Fallback: Gemini Preview -> Gemini Stable -> Groq Llama"""
+    """Triple-Layer Fallback: 3.1 Preview -> 3.0 Stable -> Groq Llama"""
     
-    # LAYER 1: Gemini 3.1 Flash Preview (High Logic, Low Stability)
+    # LAYER 1: Gemini 3.1 Flash (Cutting Edge)
     try:
-        print("🚀 Layer 1: Trying Gemini 3.1 Flash Preview...")
+        print("🚀 Layer 1: Trying Gemini 3.1 Flash...")
         res = gemini_client.models.generate_content(
-            model='gemini-3.1-flash-lite-preview', 
+            model='gemini-3.1-flash', 
             contents=prompt, 
             config={'response_mime_type': 'application/json'}
         )
@@ -46,11 +46,11 @@ def get_viral_content(prompt):
     except Exception as e:
         print(f"⚠️ Layer 1 Failed: {e}")
 
-    # LAYER 2: Gemini 2.0 Flash (Production Stable)
+    # LAYER 2: Gemini 3.0 Flash (Production Stable)
     try:
-        print("🚀 Layer 2: Trying Gemini 2.0 Flash Stable...")
+        print("🚀 Layer 2: Trying Gemini 3.0 Flash Stable...")
         res = gemini_client.models.generate_content(
-            model='gemini-2.0-flash', 
+            model='gemini-3.0-flash', 
             contents=prompt, 
             config={'response_mime_type': 'application/json'}
         )
@@ -58,7 +58,7 @@ def get_viral_content(prompt):
     except Exception as e:
         print(f"⚠️ Layer 2 Failed: {e}")
 
-    # LAYER 3: Groq Llama 3.3 70B (Max Speed, High Reliability)
+    # LAYER 3: Groq Llama 3.3 70B (Reliability King)
     try:
         print("🚀 Layer 3: Trying Groq Llama 3.3 70B...")
         chat_completion = groq_client.chat.completions.create(
@@ -99,18 +99,15 @@ def build_sota_video(word_timings):
             f.write(requests.get("https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Black.ttf").content)
     create_ass_file(word_timings)
     
-    # Gameplay Check
     if os.path.exists("gameplay.mp4"): shutil.copy("gameplay.mp4", "bottom.mp4")
     else:
         gta = requests.get("https://raw.githubusercontent.com/the-muda-project/video-assets/main/gta_ramp_loop.mp4")
         with open("bottom.mp4", 'wb') as f: f.write(gta.content)
         
-    # Top B-Roll
     q = random.choice(["cyberpunk typing", "matrix coding", "dark academic study"])
     res_t = requests.get(f"https://api.pexels.com/videos/search?query={q}&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
     with open("top.mp4", 'wb') as f: f.write(requests.get(res_t['videos'][0]['video_files'][0]['link']).content)
     
-    # Music
     with open("music.mp3", 'wb') as f: f.write(requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3").content)
 
     cmd = (
