@@ -19,7 +19,8 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 def send_telegram(message=None, file_path=None):
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    if not (token and chat_id): return
+    if not (token and chat_id):
+        return
     try:
         url = f"https://api.telegram.org/bot{token}/"
         if file_path:
@@ -27,7 +28,8 @@ def send_telegram(message=None, file_path=None):
                 requests.post(url + "sendVideo", data={'chat_id': chat_id, 'caption': message}, files={'video': f})
         else:
             requests.post(url + "sendMessage", data={'chat_id': chat_id, 'text': message})
-    except Exception as e: print(f"❌ Telegram Error: {e}")
+    except Exception as e:
+        print(f"❌ Telegram Error: {e}")
 
 # --- 2. ASSETS & TIMINGS ---
 async def get_stealth_screenshot(url):
@@ -42,10 +44,10 @@ async def get_stealth_screenshot(url):
             await page.screenshot(path="tool_ss.png")
             await browser.close()
             return True
-    except: return False
+    except:
+        return False
 
 def format_srt_time(seconds):
-    """Converts seconds to 00:00:00,000 for SRT format"""
     ms = int((seconds % 1) * 1000)
     s = int(seconds)
     m, s = divmod(s, 60)
@@ -56,7 +58,6 @@ def format_srt_time(seconds):
 def build_sota_video(data, has_ss, word_timings):
     print("🎬 FFmpeg: Building Final Video...")
     
-    # Generate perfect .srt file
     srt_content = ""
     for i, item in enumerate(word_timings):
         start = format_srt_time(item['start'])
@@ -66,25 +67,25 @@ def build_sota_video(data, has_ss, word_timings):
     with open("subs.srt", "w", encoding="utf-8") as f:
         f.write(srt_content)
 
-    # Hardcoded GTA V Ramp gameplay for guaranteed brainrot
     gta_url = "https://raw.githubusercontent.com/the-muda-project/video-assets/main/gta_ramp_loop.mp4"
     try:
-        with open("bottom.mp4", 'wb') as f: f.write(requests.get(gta_url).content)
+        with open("bottom.mp4", 'wb') as f:
+            f.write(requests.get(gta_url).content)
     except:
         res = requests.get("https://api.pexels.com/videos/search?query=neon+abstract+fast&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
-        with open("bottom.mp4", 'wb') as f: f.write(requests.get(res['videos'][0]['video_files'][0]['link']).content)
+        with open("bottom.mp4", 'wb') as f:
+            f.write(requests.get(res['videos'][0]['video_files'][0]['link']).content)
 
-    # Audio
     r_music = requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3")
-    with open("music.mp3", 'wb') as f: f.write(r_music.content)
+    with open("music.mp3", 'wb') as f:
+        f.write(r_music.content)
 
-    # Top Visual
     top_input = "-loop 1 -i tool_ss.png" if has_ss else "-i top_fallback.mp4"
     if not has_ss:
         res_t = requests.get("https://api.pexels.com/videos/search?query=matrix+coding&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
-        with open("top_fallback.mp4", 'wb') as f: f.write(requests.get(res_t['videos'][0]['video_files'][0]['link']).content)
+        with open("top_fallback.mp4", 'wb') as f:
+            f.write(requests.get(res_t['videos'][0]['video_files'][0]['link']).content)
 
-    # FFmpeg Command
     video_top = "loop=loop=-1:size=1,scale=1080:960" if has_ss else "scale=1080:960,setsar=1"
     cmd = (
         f'ffmpeg -y {top_input} -i bottom.mp4 -i voice.mp3 -i music.mp3 '
@@ -130,14 +131,12 @@ def upload_all(data):
 async def run_pipeline():
     try:
         mode = random.choice(["hindi", "global"])
-        # FORCE Gemini to return an object, not a list
         prompt = f"Mode: {mode}. Pick a unique AI tool. Return ONLY ONE JSON OBJECT (not a list): {{\n  \"name\": \"...\",\n  \"url\": \"...\",\n  \"script\": \"40s script...\",\n  \"title\": \"...\",\n  \"description\": \"...\"\n}}"
         res = client.models.generate_content(model='gemini-3.1-flash-lite-preview', contents=prompt, config={'response_mime_type': 'application/json'})
         
         raw_json = res.text.replace("```json", "").replace("```", "").strip()
         data = json.loads(raw_json)
         
-        # THE SAFETY NET: If Gemini still returns a list, grab the first item
         if isinstance(data, list):
             data = data[0]
             
@@ -145,28 +144,7 @@ async def run_pipeline():
         
         voice = "hi-IN-MadhurNeural" if mode == "hindi" else "en-US-BrianNeural"
         communicate = edge_tts.Communicate(data['script'], voice, rate="+25%", pitch="+10Hz")
-        word_timings = []
-        with open("voice.mp3", "wb") as f:
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    f.write(chunk["data"])
-                elif chunk["type"] == "WordBoundary":
-                    word_timings.append({
-                        "word": chunk["text"],
-                        "start": chunk["offset"] / 10000000,
-                        "end": (chunk["offset"] + chunk["duration"]) / 10000000
-                    })
         
-        build_sota_video(data, has_ss, word_timings)
-        upload_all(data)
-        send_telegram(message=f"🏁 SOTA Success: {data['name']}", file_path="output.mp4")
-        
-    except Exception as e:
-        send_telegram(message=f"💥 Crash: {str(e)}")
-        print(f"CRASH: {e}")
-
-if __name__ == "__main__":
-    asyncio.run(run_pipeline())
         word_timings = []
         with open("voice.mp3", "wb") as f:
             async for chunk in communicate.stream():
