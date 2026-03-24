@@ -7,20 +7,20 @@ import random
 import subprocess
 import shutil
 from google import genai
+from groq import Groq
 import edge_tts
 from instagrapi import Client
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
 
-# --- 1. SETUP ---
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+# --- 1. SETUP CLIENTS ---
+gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 def send_telegram(message=None, file_path=None):
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    if not token or not chat_id:
-        return
+    token, chat_id = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id: return
     try:
         url = f"https://api.telegram.org/bot{token}/"
         if file_path and os.path.exists(file_path):
@@ -28,10 +28,49 @@ def send_telegram(message=None, file_path=None):
                 requests.post(url + "sendVideo", data={'chat_id': chat_id, 'caption': message}, files={'video': f})
         else:
             requests.post(url + "sendMessage", data={'chat_id': chat_id, 'text': message})
-    except Exception as e:
-        print(f"❌ Telegram Error: {e}")
+    except Exception as e: print(f"❌ Telegram Error: {e}")
 
-# --- 2. ASSETS & TIMINGS ---
+# --- 2. THE FAIL-SAFE ENGINE ---
+def get_viral_content(prompt):
+    """Triple-Layer Fallback: Gemini Preview -> Gemini Stable -> Groq Llama"""
+    
+    # LAYER 1: Gemini 3.1 Flash Preview (High Logic, Low Stability)
+    try:
+        print("🚀 Layer 1: Trying Gemini 3.1 Flash Preview...")
+        res = gemini_client.models.generate_content(
+            model='gemini-3.1-flash-lite-preview', 
+            contents=prompt, 
+            config={'response_mime_type': 'application/json'}
+        )
+        return json.loads(res.text.replace("```json", "").replace("```", "").strip())
+    except Exception as e:
+        print(f"⚠️ Layer 1 Failed: {e}")
+
+    # LAYER 2: Gemini 2.0 Flash (Production Stable)
+    try:
+        print("🚀 Layer 2: Trying Gemini 2.0 Flash Stable...")
+        res = gemini_client.models.generate_content(
+            model='gemini-2.0-flash', 
+            contents=prompt, 
+            config={'response_mime_type': 'application/json'}
+        )
+        return json.loads(res.text.replace("```json", "").replace("```", "").strip())
+    except Exception as e:
+        print(f"⚠️ Layer 2 Failed: {e}")
+
+    # LAYER 3: Groq Llama 3.3 70B (Max Speed, High Reliability)
+    try:
+        print("🚀 Layer 3: Trying Groq Llama 3.3 70B...")
+        chat_completion = groq_client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama-3.3-70b-versatile",
+            response_format={"type": "json_object"}
+        )
+        return json.loads(chat_completion.choices[0].message.content)
+    except Exception as e:
+        raise Exception(f"❌ ALL LAYERS FAILED. Final Error: {e}")
+
+# --- 3. ASSET HELPERS ---
 def format_ass_time(seconds):
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
@@ -50,61 +89,30 @@ def create_ass_file(word_timings):
     with open("subs.ass", "w", encoding='utf-8') as f:
         f.write(header)
         for item in word_timings:
-            start = format_ass_time(item['start'])
-            end = format_ass_time(item['end'])
-            word = item['word'].strip().upper()
-            f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{word}\n")
+            start, end = format_ass_time(item['start']), format_ass_time(item['end'])
+            f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{item['word'].strip().upper()}\n")
 
-# --- 3. VIDEO BUILDER ---
 def build_sota_video(word_timings):
-    print("🎬 FFmpeg: Building Final Video (Information Gap Mode)...")
-    
-    # 1. Download Font locally
     os.makedirs("fonts", exist_ok=True)
     if not os.path.exists("fonts/Montserrat-Black.ttf"):
-        print("📥 Downloading Custom Font...")
-        r_font = requests.get("https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Black.ttf")
         with open("fonts/Montserrat-Black.ttf", "wb") as f:
-            f.write(r_font.content)
-
+            f.write(requests.get("https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Black.ttf").content)
     create_ass_file(word_timings)
-
-    # 2. Bottom Gameplay (Check for local file first)
-    if not os.path.exists("gameplay.mp4"):
-        print("📥 Downloading GTA Gameplay Loop...")
-        gta_url = "https://raw.githubusercontent.com/the-muda-project/video-assets/main/gta_ramp_loop.mp4"
-        try:
-            r = requests.get(gta_url)
-            r.raise_for_status()
-            with open("bottom.mp4", 'wb') as f:
-                f.write(r.content)
-        except:
-            res = requests.get("https://api.pexels.com/videos/search?query=neon+abstract+fast&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
-            with open("bottom.mp4", 'wb') as f:
-                f.write(requests.get(res['videos'][0]['video_files'][0]['link']).content)
+    
+    # Gameplay Check
+    if os.path.exists("gameplay.mp4"): shutil.copy("gameplay.mp4", "bottom.mp4")
     else:
-        shutil.copy("gameplay.mp4", "bottom.mp4")
+        gta = requests.get("https://raw.githubusercontent.com/the-muda-project/video-assets/main/gta_ramp_loop.mp4")
+        with open("bottom.mp4", 'wb') as f: f.write(gta.content)
+        
+    # Top B-Roll
+    q = random.choice(["cyberpunk typing", "matrix coding", "dark academic study"])
+    res_t = requests.get(f"https://api.pexels.com/videos/search?query={q}&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
+    with open("top.mp4", 'wb') as f: f.write(requests.get(res_t['videos'][0]['video_files'][0]['link']).content)
+    
+    # Music
+    with open("music.mp3", 'wb') as f: f.write(requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3").content)
 
-    # 3. Top Aesthetic B-Roll (Information Gap)
-    print("📥 Fetching Aesthetic B-Roll for Top Half...")
-    queries = ["cyberpunk typing", "matrix coding", "hacker aesthetic", "late night studying dark"]
-    q = random.choice(queries)
-    try:
-        res_t = requests.get(f"https://api.pexels.com/videos/search?query={q}&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
-        with open("top.mp4", 'wb') as f:
-            f.write(requests.get(res_t['videos'][0]['video_files'][0]['link']).content)
-    except:
-        # Emergency absolute fallback
-        res_t = requests.get("https://api.pexels.com/videos/search?query=technology&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
-        with open("top.mp4", 'wb') as f:
-            f.write(requests.get(res_t['videos'][0]['video_files'][0]['link']).content)
-
-    # 4. Music
-    r_music = requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3")
-    with open("music.mp3", 'wb') as f:
-        f.write(r_music.content)
-
-    # 5. FFmpeg Command
     cmd = (
         f'ffmpeg -y -i top.mp4 -i bottom.mp4 -i voice.mp3 -i music.mp3 '
         f'-filter_complex "'
@@ -117,109 +125,52 @@ def build_sota_video(word_timings):
 
 # --- 4. UPLOADER ---
 def upload_all(data):
-    tags_string = " ".join(data.get('tags', ["#tech", "#ai"]))
-    caption = f"{data['title']}\n\n👇 Comment '{data['keyword']}' and I'll send you the link!\n\n{data['description']}\n\n{tags_string}"
-
+    caption = f"{data['title']}\n\n👇 Comment '{data['keyword']}' for the link!\n\n{data['description']}\n\n{' '.join(data['tags'])}"
     try:
         cl = Client()
         cl.set_settings(json.loads(os.getenv("INSTA_SESSION_JSON")))
         cl.clip_upload("output.mp4", caption=caption)
         print("✅ IG Success")
-    except Exception as e:
-        print(f"❌ IG Error: {e}")
+    except Exception as e: print(f"❌ IG Error: {e}")
 
     try:
         creds = Credentials.from_authorized_user_info(json.loads(os.getenv("YOUTUBE_TOKEN_JSON")))
         youtube = build("youtube", "v3", credentials=creds)
-        
-        clean_tags = [tag.replace("#", "") for tag in data.get('tags', ["tech", "ai"])]
-        
-        request = youtube.videos().insert(
+        youtube.videos().insert(
             part="snippet,status",
-            body={
-                "snippet": {
-                    "title": f"{data['title']} (Comment {data['keyword']})",
-                    "description": caption,
-                    "categoryId": "27",
-                    "tags": clean_tags
-                },
-                "status": {"privacyStatus": "public"}
-            },
+            body={"snippet": {"title": f"{data['title']} (Comment {data['keyword']})", "description": caption, "categoryId": "27", "tags": data['tags']}, "status": {"privacyStatus": "public"}},
             media_body=MediaFileUpload("output.mp4")
-        )
-        request.execute()
+        ).execute()
         print("✅ YT Success")
-    except Exception as e:
-        print(f"❌ YT Error: {e}")
+    except Exception as e: print(f"❌ YT Error: {e}")
 
-# --- 5. PIPELINE ---
+# --- 5. MAIN ---
 async def run_pipeline():
     try:
         mode = random.choice(["hindi", "global"])
-        
         prompt = f"""
-        Mode: {mode}. You are a ruthless, viral tech creator. Pick a highly useful, niche AI tool for BTech/College students.
-        
-        Write a 40-second script following this framework:
-        1. Hook (0-3s): Controversial take or severe pain-point (e.g., "Your professors are praying you don't find this").
-        2. Agitation (3-10s): Validate the struggle (e.g., "Reading 50-page PDFs is soul-crushing").
-        3. Reveal (10-15s): Drop the AI tool name like a cheat code.
-        4. Application (15-30s): Explain the exact transformation and time saved.
-        5. The Comment Bait CTA (30-40s): NEVER say "link in bio". Say exactly: "Comment the word [SECRET_WORD] and I'll send you the direct link, and drop a follow."
-        
-        CRITICAL RULES:
-        - NO corporate jargon.
-        - Speak casually. If mode is 'hindi', use heavy Hinglish college slang (bhai, jugaad, etc.).
-        
-        Return ONLY ONE JSON OBJECT:
-        {{
-          "name": "Tool Name",
-          "url": "Website URL",
-          "keyword": "ONE uppercase word for them to comment (e.g., HACK, CHEAT, PASS)",
-          "script": "Raw script text...",
-          "title": "Viral Clickbait Title #shorts",
-          "description": "A 2-sentence SEO description.",
-          "tags": ["#techhacks", "#btech", "#studenthacks", "#ai", "#productivity"]
-        }}
+        Mode: {mode}. Viral tech creator. Pick niche AI tool for BTech students.
+        Framework: Hook(0-3s), Agitation(3-10s), Reveal(10-15s), Application(15-30s), CTA: "Comment [SECRET_WORD]".
+        JSON Format: {{"name":"", "url":"", "keyword":"", "script":"", "title":"", "description":"", "tags":[]}}
+        No corporate jargon. Slang allowed.
         """
         
-        res = None
-        for attempt in range(3):
-            try:
-                res = client.models.generate_content(model='gemini-3.1-flash-lite-preview', contents=prompt, config={'response_mime_type': 'application/json'})
-                break
-            except Exception as api_e:
-                if "503" in str(api_e) and attempt < 2:
-                    print(f"⚠️ API busy. Retrying... ({attempt+1}/3)")
-                    time.sleep(10)
-                else: raise api_e
-
-        raw_json = res.text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(raw_json)
-        if isinstance(data, list): data = data[0]
-        
+        data = get_viral_content(prompt)
         voice = "hi-IN-MadhurNeural" if mode == "hindi" else "en-US-BrianNeural"
         communicate = edge_tts.Communicate(data['script'], voice, rate="+25%", pitch="+10Hz")
         
         word_timings = []
         with open("voice.mp3", "wb") as f:
             async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    f.write(chunk["data"])
+                if chunk["type"] == "audio": f.write(chunk["data"])
                 elif chunk["type"] == "WordBoundary":
-                    word_timings.append({
-                        "word": chunk["text"],
-                        "start": chunk["offset"] / 10000000,
-                        "end": (chunk["offset"] + chunk["duration"]) / 10000000
-                    })
+                    word_timings.append({"word": chunk["text"], "start": chunk["offset"]/10000000, "end": (chunk["offset"]+chunk["duration"])/10000000})
         
         build_sota_video(word_timings)
         upload_all(data)
-        send_telegram(message=f"🏁 SOTA Success: {data['name']}\nMode: {mode.upper()}", file_path="output.mp4")
-        
+        send_telegram(message=f"🏁 SOTA Success: {data['name']}\nKeyword: {data['keyword']}", file_path="output.mp4")
     except Exception as e:
-        send_telegram(message=f"💥 Crash: {str(e)}")
-        print(f"CRASH: {e}")
+        send_telegram(message=f"💥 FINAL CRASH: {str(e)}")
 
 if __name__ == "__main__":
     asyncio.run(run_pipeline())
