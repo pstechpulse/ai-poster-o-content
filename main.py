@@ -87,7 +87,7 @@ def build_sota_video(word_timings):
 
     create_ass_file(word_timings)
 
-    # SELECT FROM VAULT (Full Screen Gameplay)
+    # SELECT FROM VAULT
     vault_path = "gameplays"
     if os.path.exists(vault_path) and os.listdir(vault_path):
         all_videos = [f for f in os.listdir(vault_path) if f.endswith(".mp4")]
@@ -105,9 +105,15 @@ def build_sota_video(word_timings):
     # Music
     with open("music.mp3", 'wb') as f: f.write(requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3").content)
 
-    # FFmpeg Command (Clean, Full Screen 9:16 Crop, Subtitles on top)
+    # --- THE RANDOM START TIME FIX ---
+    # Picks a random start point between 0 and 75 seconds
+    random_start = random.randint(0, 75)
+    print(f"🎲 Randomly slicing gameplay starting at {random_start} seconds...")
+    # ---------------------------------
+
+    # FFmpeg Command (Notice the -ss {random_start} before the bg.mp4 input)
     cmd = (
-        f'ffmpeg -y -stream_loop -1 -i bg.mp4 -i voice.mp3 -i music.mp3 '
+        f'ffmpeg -y -ss {random_start} -stream_loop -1 -i bg.mp4 -i voice.mp3 -i music.mp3 '
         f'-filter_complex "'
         f'[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[scaled_bg]; '
         f'[scaled_bg]ass=subs.ass:fontsdir={font_dir}[outv]; '
