@@ -13,13 +13,12 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
 
-# --- 1. SETUP ---
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 def send_telegram(message=None, file_path=None):
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    if not (token and chat_id):
+    if not token or not chat_id:
         return
     try:
         url = f"https://api.telegram.org/bot{token}/"
@@ -31,7 +30,6 @@ def send_telegram(message=None, file_path=None):
     except Exception as e:
         print(f"❌ Telegram Error: {e}")
 
-# --- 2. ASSETS & TIMINGS ---
 async def get_stealth_screenshot(url):
     print(f"📸 Screenshotting {url}...")
     try:
@@ -48,7 +46,6 @@ async def get_stealth_screenshot(url):
         return False
 
 def format_ass_time(seconds):
-    """The Mathematical Fix: Pure math to get precise centiseconds for ASS subtitles"""
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
     s = int(seconds % 60)
@@ -67,14 +64,11 @@ def create_ass_file(word_timings):
         for item in word_timings:
             start = format_ass_time(item['start'])
             end = format_ass_time(item['end'])
-            # \b1 makes it bold, &H0000FFFF makes it Neon Yellow
             f.write(f"Dialogue: 0,0:{start},0:{end},Default,,0,0,0,,{{\\b1}}{item['word'].upper()}\n")
 
-# --- 3. VIDEO BUILDER ---
 def build_sota_video(has_ss):
     print("🎬 FFmpeg: Building Final Video...")
     
-    # Brainrot Gameplay Link
     gta_url = "https://raw.githubusercontent.com/the-muda-project/video-assets/main/gta_ramp_loop.mp4"
     try:
         with open("bottom.mp4", 'wb') as f:
@@ -94,7 +88,6 @@ def build_sota_video(has_ss):
         with open("top_fallback.mp4", 'wb') as f:
             f.write(requests.get(res_t['videos'][0]['video_files'][0]['link']).content)
 
-    # Simplified FFmpeg string (No escaping nightmares)
     video_top = "loop=loop=-1:size=1,scale=1080:960" if has_ss else "scale=1080:960,setsar=1"
     cmd = (
         f'ffmpeg -y {top_input} -i bottom.mp4 -i voice.mp3 -i music.mp3 '
@@ -106,7 +99,6 @@ def build_sota_video(has_ss):
     )
     subprocess.run(cmd, shell=True)
 
-# --- 4. UPLOADER ---
 def upload_all(data):
     try:
         cl = Client()
@@ -136,7 +128,6 @@ def upload_all(data):
     except Exception as e:
         print(f"❌ YT Error: {e}")
 
-# --- 5. PIPELINE ---
 async def run_pipeline():
     try:
         mode = random.choice(["hindi", "global"])
@@ -169,68 +160,6 @@ async def run_pipeline():
         create_ass_file(word_timings)
         build_sota_video(has_ss)
         
-        upload_all(data)
-        send_telegram(message=f"🏁 SOTA Success: {data['name']}", file_path="output.mp4")
-        
-    except Exception as e:
-        send_telegram(message=f"💥 Crash: {str(e)}")
-        print(f"CRASH: {e}")
-
-if __name__ == "__main__":
-    asyncio.run(run_pipeline())
-        print(f"❌ IG Error: {e}")
-
-    try:
-        creds = Credentials.from_authorized_user_info(json.loads(os.getenv("YOUTUBE_TOKEN_JSON")))
-        youtube = build("youtube", "v3", credentials=creds)
-        request = youtube.videos().insert(
-            part="snippet,status",
-            body={
-                "snippet": {
-                    "title": data['title'],
-                    "description": data['description'],
-                    "categoryId": "27"
-                },
-                "status": {"privacyStatus": "public"}
-            },
-            media_body=MediaFileUpload("output.mp4")
-        )
-        request.execute()
-        print("✅ YT Success")
-    except Exception as e:
-        print(f"❌ YT Error: {e}")
-
-# --- 5. PIPELINE ---
-async def run_pipeline():
-    try:
-        mode = random.choice(["hindi", "global"])
-        prompt = f"Mode: {mode}. Pick a unique AI tool. Return ONLY ONE JSON OBJECT (not a list): {{\n  \"name\": \"...\",\n  \"url\": \"...\",\n  \"script\": \"40s script...\",\n  \"title\": \"...\",\n  \"description\": \"...\"\n}}"
-        res = client.models.generate_content(model='gemini-3.1-flash-lite-preview', contents=prompt, config={'response_mime_type': 'application/json'})
-        
-        raw_json = res.text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(raw_json)
-        
-        if isinstance(data, list):
-            data = data[0]
-            
-        has_ss = await get_stealth_screenshot(data['url'])
-        
-        voice = "hi-IN-MadhurNeural" if mode == "hindi" else "en-US-BrianNeural"
-        communicate = edge_tts.Communicate(data['script'], voice, rate="+25%", pitch="+10Hz")
-        
-        word_timings = []
-        with open("voice.mp3", "wb") as f:
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    f.write(chunk["data"])
-                elif chunk["type"] == "WordBoundary":
-                    word_timings.append({
-                        "word": chunk["text"],
-                        "start": chunk["offset"] / 10000000,
-                        "end": (chunk["offset"] + chunk["duration"]) / 10000000
-                    })
-        
-        build_sota_video(data, has_ss, word_timings)
         upload_all(data)
         send_telegram(message=f"🏁 SOTA Success: {data['name']}", file_path="output.mp4")
         
