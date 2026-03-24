@@ -1,4 +1,4 @@
-name: Ultimate Content Engine V5
+name: Ultimate Content Engine SOTA
 on:
   schedule:
     - cron: '0 3 * * *'  # 8:30 AM IST
@@ -14,19 +14,16 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y imagemagick ghostscript
-          # THE NUCLEAR FIX: Removes the security policies that block TextClip
-          sudo sed -i '/<policy domain="coder" rights="none" pattern="\(PDF\|LABEL\|CAPTION\|TEXT\)" \/>/d' /etc/ImageMagick-6/policy.xml
-          sudo sed -i 's/rights="none" pattern="@\*"/rights="read|write" pattern="@\*"/g' /etc/ImageMagick-6/policy.xml
+          sudo apt-get install -y ffmpeg fonts-liberation libnss3-dev libatk-bridge2.0-0 libxkbcommon0 libgbm-dev
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
       - name: Install PyDeps
         run: |
-          pip install google-genai moviepy==1.0.3 edge-tts requests instagrapi 
-          pip install google-api-python-client google-auth-oauthlib opencv-python-headless 
-          pip install numpy "Pillow<10.0.0"
+          pip install google-genai edge-tts requests instagrapi 
+          pip install google-api-python-client google-auth-oauthlib playwright
+          playwright install chromium
       - name: Run Engine
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -36,3 +33,4 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
+        
