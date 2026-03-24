@@ -46,46 +46,29 @@ def get_viral_content(prompt):
     except Exception as e:
         raise Exception(f"❌ ALL LAYERS FAILED: {e}")
 
-# --- 3. ASS & VIDEO BUILDER ---
-def format_ass_time(seconds):
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    cs = int((seconds % 1) * 100)
-    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
-
-def create_ass_file(word_timings, mode):
-    # Selects the system fonts we installed on the Ubuntu runner
-    font_name = "Noto Sans Devanagari" if mode == "hindi" else "Liberation Sans"
-    
-    header = (
-        "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n"
-        "[V4+ Styles]\n"
-        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        # Style definition: Yellow text, black outline, perfectly sized
-        f"Style: Default,{font_name},110,&H0000FFFF,&H0000FFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,6,0,5,10,10,10,1\n\n"
-        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-    )
-    
-    # Safety check for empty TTS
-    if not word_timings:
-        word_timings.append({"word": " ", "start": 0.0, "end": 1.0})
-        
-    with open("subs.ass", "w", encoding='utf-8') as f:
-        f.write(header)
-        for item in word_timings:
-            start, end = format_ass_time(item['start']), format_ass_time(item['end'])
-            word = item['word'].strip().upper()
-            # {\an5} mathematically forces the text to the dead center of the screen
-            # {\b1} forces bold text
-            f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{{\\an5\\b1}}{word}\n")
+# --- 3. DIRECT DRAWTEXT RENDERER ---
+def sanitize_word(w):
+    # Removes chars that break FFmpeg command parsing, swaps single quote for a smart quote
+    return w.strip().upper().replace("'", "’").replace('"', '”').replace(':', '').replace(',', '')
 
 def build_sota_video(word_timings, mode):
-    print(f"🎬 FFmpeg: Building Final Video for mode: {mode}...")
-    
-    create_ass_file(word_timings, mode)
+    print(f"🎬 FFmpeg: Building Final Video via DIRECT DRAWTEXT for mode: {mode}...")
 
-    # SELECT FROM VAULT
+    # 1. DOWNLOAD FONTS LOCALLY (Bypassing Ubuntu System Fonts)
+    font_en = os.path.abspath("font_en.ttf")
+    font_hi = os.path.abspath("font_hi.ttf")
+    
+    if not os.path.exists(font_en):
+        print("📥 Downloading English Font...")
+        with open(font_en, "wb") as f: f.write(requests.get("https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Black.ttf").content)
+    if not os.path.exists(font_hi):
+        print("📥 Downloading Hindi Font...")
+        with open(font_hi, "wb") as f: f.write(requests.get("https://github.com/google/fonts/raw/main/ofl/notosansdevanagari/NotoSansDevanagari-Black.ttf").content)
+        
+    font_path = font_hi if mode == "hindi" else font_en
+    font_path = font_path.replace('\\', '/') # Ensure safe paths for FFmpeg
+
+    # 2. SELECT FROM VAULT
     vault_path = "gameplays"
     if os.path.exists(vault_path) and os.listdir(vault_path):
         all_videos = [f for f in os.listdir(vault_path) if f.endswith(".mp4")]
@@ -100,18 +83,35 @@ def build_sota_video(word_timings, mode):
         gta = requests.get("https://raw.githubusercontent.com/the-muda-project/video-assets/main/gta_ramp_loop.mp4")
         with open("bg.mp4", 'wb') as f: f.write(gta.content)
         
-    # Music
+    # 3. Music
     with open("music.mp3", 'wb') as f: f.write(requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3").content)
 
-    random_start = random.randint(0, 45)
+    # 4. GENERATE FILTERGRAPH SCRIPT (The Magic Fix)
+    # We write every single word's timestamp into a text file so the terminal doesn't crash
+    filter_lines = ["[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"]
     
-    # Notice how incredibly clean this FFmpeg command is now. No font styles, no commas.
+    if not word_timings: # Safety net
+        word_timings.append({"word": " ", "start": 0.0, "end": 1.0})
+        
+    for w in word_timings:
+        word = sanitize_word(w['word'])
+        if not word: continue
+        start, end = w['start'], w['end']
+        # Paint instruction: Dead center, Yellow, Size 130, Black Border width 8
+        line = f"drawtext=fontfile='{font_path}':text='{word}':enable='between(t,{start},{end})':x=(w-text_w)/2:y=(h-text_h)/2:fontsize=130:fontcolor=yellow:borderw=8:bordercolor=black"
+        filter_lines.append(line)
+        
+    video_chain = ",".join(filter_lines) + "[outv];\n"
+    audio_chain = "[1:a]volume=2.0[v_a]; [2:a]volume=0.15[m_a]; [v_a][m_a]amix=inputs=2:duration=first[outa]"
+    
+    with open("filter.txt", "w", encoding="utf-8") as f:
+        f.write(video_chain + audio_chain)
+
+    # 5. EXECUTE FFMPEG
+    random_start = random.randint(0, 45)
     cmd = (
         f'ffmpeg -y -ss {random_start} -stream_loop -1 -i bg.mp4 -i voice.mp3 -i music.mp3 '
-        f'-filter_complex "'
-        f'[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[scaled_bg]; '
-        f'[scaled_bg]ass=subs.ass[outv]; '
-        f'[1:a]volume=2.0[v_a]; [2:a]volume=0.15[m_a]; [v_a][m_a]amix=inputs=2:duration=first[outa]" '
+        f'-filter_complex_script filter.txt '
         f'-map "[outv]" -map "[outa]" -c:v libx264 -t 45 -pix_fmt yuv420p output.mp4'
     )
     subprocess.run(cmd, shell=True)
