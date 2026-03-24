@@ -15,8 +15,12 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-liberation libnss3-dev libatk-bridge2.0-0 libxkbcommon0 libgbm-dev
-          
+          sudo apt-get install -y imagemagick ghostscript
+          # Critical Fix: This allows MoviePy to actually write text files
+          sudo sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/g' /etc/ImageMagick-6/policy.xml
+          sudo sed -i 's/rights="none" pattern="LABEL"/rights="read|write" pattern="LABEL"/g' /etc/ImageMagick-6/policy.xml
+          sudo sed -i 's/rights="none" pattern="CAPTION"/rights="read|write" pattern="CAPTION"/g' /etc/ImageMagick-6/policy.xml
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
