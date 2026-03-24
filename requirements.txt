@@ -1,7 +1,10 @@
 google-genai
+moviepy==1.0.3
 edge-tts
 requests
 instagrapi
 google-api-python-client
 google-auth-oauthlib
-moviepy==1.0.3
+opencv-python-headless
+numpy
+Pillow<10.0.0
