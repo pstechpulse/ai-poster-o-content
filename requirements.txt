@@ -4,5 +4,4 @@ requests
 instagrapi
 google-api-python-client
 google-auth-oauthlib
-playwright
 moviepy==1.0.3
