@@ -1,9 +1,4 @@
-google-generativeai
-moviepy
-edge-tts
-requests
-instagrapi
-google-api-python-clientgoogle-genai
+google-genai
 edge-tts
 requests
 instagrapi
@@ -12,4 +7,4 @@ google-auth-oauthlib
 playwright
 numpy
 yt-dlp
-google-auth-oauthlib
+moviepy==1.0.3
