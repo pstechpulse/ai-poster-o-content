@@ -150,7 +150,7 @@ def upload_all(data):
     try:
         creds = Credentials.from_authorized_user_info(json.loads(os.getenv("YOUTUBE_TOKEN_JSON")))
         youtube = build("youtube", "v3", credentials=creds)
-        request = youtube.videos().insert(
+        youtube.videos().insert(
             part="snippet,status",
             body={
                 "snippet": {
