@@ -31,7 +31,7 @@ def send_telegram(message=None, file_path=None):
     except Exception as e:
         print(f"❌ Telegram Error: {e}")
 
-# --- 2. ASSETS ---
+# --- 2. ASSETS & TIMINGS ---
 async def get_stealth_screenshot(url):
     print(f"📸 Screenshotting {url}...")
     try:
@@ -47,37 +47,58 @@ async def get_stealth_screenshot(url):
     except:
         return False
 
-def get_local_gameplay():
-    print("🎮 Selecting local gameplay from the vault...")
-    if not os.path.exists("gameplays"):
-        os.makedirs("gameplays")
-        
-    videos = [f for f in os.listdir("gameplays") if f.endswith(".mp4")]
-    if not videos:
-        print("⚠️ No videos found in 'gameplays' folder! Using emergency fallback.")
-        res = requests.get("https://api.pexels.com/videos/search?query=matrix+coding&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
-        r_fallback = requests.get(res['videos'][0]['video_files'][0]['link'])
-        with open("bottom.mp4", 'wb') as f:
-            f.write(r_fallback.content)
-        return "bottom.mp4"
-    
-    chosen_video = random.choice(videos)
-    print(f"✅ Selected: {chosen_video}")
-    return os.path.join("gameplays", chosen_video)
+def format_ass_time(seconds):
+    """Generates the EXACT H:MM:SS.cs format required by libass"""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    cs = int((seconds % 1) * 100)
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+def create_ass_file(word_timings):
+    header = (
+        "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        "Style: Default,Montserrat Black,110,&H0000FFFF,&H0000FFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,6,0,5,10,10,10,1\n\n"
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+    with open("subs.ass", "w", encoding='utf-8') as f:
+        f.write(header)
+        for item in word_timings:
+            start = format_ass_time(item['start'])
+            end = format_ass_time(item['end'])
+            word = item['word'].strip().upper()
+            # THE FIX: Removed the extra '0:' that was breaking the FFmpeg timeline
+            f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{word}\n")
 
 # --- 3. VIDEO BUILDER ---
-def build_sota_video(data, has_ss, word_timings):
+def build_sota_video(has_ss, word_timings):
     print("🎬 FFmpeg: Building Final Video...")
     
-    font_url = "https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Black.ttf"
-    with open("font.ttf", "wb") as f:
-        f.write(requests.get(font_url).content)
+    # 1. Download Font locally so GitHub can't fail to load it
+    os.makedirs("fonts", exist_ok=True)
+    if not os.path.exists("fonts/Montserrat-Black.ttf"):
+        print("📥 Downloading Custom Font...")
+        r_font = requests.get("https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Black.ttf")
+        with open("fonts/Montserrat-Black.ttf", "wb") as f:
+            f.write(r_font.content)
 
-    gameplay_path = get_local_gameplay()
+    create_ass_file(word_timings)
 
-    r_music = requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3")
+    # 2. Gameplay Fallback check
+    if not os.path.exists("gameplay.mp4"):
+        print("⚠️ gameplay.mp4 not found locally! Downloading emergency fallback...")
+        gta_url = "https://raw.githubusercontent.com/the-muda-project/video-assets/main/gta_ramp_loop.mp4"
+        with open("bottom.mp4", 'wb') as f:
+            f.write(requests.get(gta_url).content)
+    else:
+        # Rename user's gameplay.mp4 to bottom.mp4 to match the command
+        os.rename("gameplay.mp4", "bottom.mp4")
+
+    # 3. Music & Top Visuals
     with open("music.mp3", 'wb') as f:
-        f.write(r_music.content)
+        f.write(requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3").content)
 
     top_input = "-loop 1 -i tool_ss.png" if has_ss else "-i top_fallback.mp4"
     if not has_ss:
@@ -85,30 +106,13 @@ def build_sota_video(data, has_ss, word_timings):
         with open("top_fallback.mp4", 'wb') as f:
             f.write(requests.get(res_t['videos'][0]['video_files'][0]['link']).content)
 
-    text_filters = []
-    if word_timings:
-        for item in word_timings:
-            word = item['word'].replace("'", "").replace('"', '').upper()
-            s, e = item['start'], item['end']
-            text_filters.append(
-                f"drawtext=fontfile=font.ttf:text='{word}':fontcolor=yellow:fontsize=120:"
-                f"x=(w-text_w)/2:y=(h-text_h)/2:borderw=6:bordercolor=black:enable='between(t,{s},{e})'"
-            )
-        full_text_chain = ",".join(text_filters)
-    else:
-        safe_name = data.get('name', 'AI TOOL').replace("'", "").upper()
-        full_text_chain = (
-            f"drawtext=fontfile=font.ttf:text='{safe_name}':fontcolor=yellow:fontsize=120:"
-            f"x=(w-text_w)/2:y=(h-text_h)/2:borderw=6:bordercolor=black"
-        )
-
+    # 4. FFmpeg Command (Using fontsdir to guarantee it finds Montserrat)
     video_top = "loop=loop=-1:size=1,scale=1080:960" if has_ss else "scale=1080:960,setsar=1"
-    
     cmd = (
-        f'ffmpeg -y {top_input} -i "{gameplay_path}" -i voice.mp3 -i music.mp3 '
+        f'ffmpeg -y {top_input} -i bottom.mp4 -i voice.mp3 -i music.mp3 '
         f'-filter_complex "'
         f'[0:v]{video_top}[t]; [1:v]scale=1080:960,setsar=1[b]; [t][b]vstack=inputs=2[v_stack]; '
-        f'[v_stack]{full_text_chain}[outv]; '
+        f'[v_stack]ass=subs.ass:fontsdir=fonts[outv]; '
         f'[2:a]volume=2.0[v_a]; [3:a]volume=0.15[m_a]; [v_a][m_a]amix=inputs=2:duration=first[outa]" '
         f'-map "[outv]" -map "[outa]" -c:v libx264 -t 45 -pix_fmt yuv420p output.mp4'
     )
@@ -116,67 +120,54 @@ def build_sota_video(data, has_ss, word_timings):
 
 # --- 4. UPLOADER ---
 def upload_all(data):
-    final_caption = f"{data['title']}\n\n{data['description']}\n\nGameplay - yt nocopyrightgameplays"
-    
-    # 3-Strike Instagram Retry Loop
-    for attempt in range(3):
-        try:
-            cl = Client()
-            cl.set_settings(json.loads(os.getenv("INSTA_SESSION_JSON")))
-            cl.clip_upload("output.mp4", caption=final_caption)
-            print("✅ IG Success")
-            break
-        except Exception as e:
-            print(f"⚠️ IG Upload Error (Attempt {attempt+1}/3): {e}")
-            time.sleep(10)
+    try:
+        cl = Client()
+        cl.set_settings(json.loads(os.getenv("INSTA_SESSION_JSON")))
+        cl.clip_upload("output.mp4", caption=f"{data['title']}\n\n{data['description']}")
+        print("✅ IG Success")
+    except Exception as e:
+        print(f"❌ IG Error: {e}")
 
-    # 3-Strike YouTube Retry Loop
-    for attempt in range(3):
-        try:
-            creds = Credentials.from_authorized_user_info(json.loads(os.getenv("YOUTUBE_TOKEN_JSON")))
-            youtube = build("youtube", "v3", credentials=creds)
-            request = youtube.videos().insert(
-                part="snippet,status",
-                body={
-                    "snippet": {
-                        "title": data['title'],
-                        "description": final_caption,
-                        "categoryId": "27"
-                    },
-                    "status": {"privacyStatus": "public"}
+    try:
+        creds = Credentials.from_authorized_user_info(json.loads(os.getenv("YOUTUBE_TOKEN_JSON")))
+        youtube = build("youtube", "v3", credentials=creds)
+        request = youtube.videos().insert(
+            part="snippet,status",
+            body={
+                "snippet": {
+                    "title": data['title'],
+                    "description": data['description'],
+                    "categoryId": "27"
                 },
-                media_body=MediaFileUpload("output.mp4", chunksize=-1, resumable=True)
-            )
-            request.execute()
-            print("✅ YT Success")
-            break
-        except Exception as e:
-            print(f"⚠️ YT Upload Error (Attempt {attempt+1}/3): {e}")
-            time.sleep(10)
+                "status": {"privacyStatus": "public"}
+            },
+            media_body=MediaFileUpload("output.mp4")
+        )
+        request.execute()
+        print("✅ YT Success")
+    except Exception as e:
+        print(f"❌ YT Error: {e}")
 
 # --- 5. PIPELINE ---
 async def run_pipeline():
     try:
         mode = random.choice(["hindi", "global"])
-        prompt = f"Mode: {mode}. Pick a unique AI tool. Return ONLY ONE JSON OBJECT (not a list): {{\n  \"name\": \"...\",\n  \"url\": \"...\",\n  \"script\": \"40s script...\",\n  \"title\": \"...\",\n  \"description\": \"...\"\n}}"
+        prompt = f"Mode: {mode}. Pick a unique AI tool. Return ONLY ONE JSON OBJECT: {{\n  \"name\": \"...\",\n  \"url\": \"...\",\n  \"script\": \"40s script...\",\n  \"title\": \"...\",\n  \"description\": \"...\"\n}}"
         
-        # 3-Strike Universal Gemini Retry Loop
         res = None
         for attempt in range(3):
             try:
                 res = client.models.generate_content(model='gemini-3.1-flash-lite-preview', contents=prompt, config={'response_mime_type': 'application/json'})
                 break
             except Exception as api_e:
-                if attempt < 2:
-                    print(f"⚠️ Gemini API Network Error. Retrying... ({attempt+1}/3)")
+                if "503" in str(api_e) and attempt < 2:
+                    print(f"⚠️ API busy. Retrying... ({attempt+1}/3)")
                     time.sleep(10)
-                else:
-                    raise api_e
+                else: raise api_e
 
         raw_json = res.text.replace("```json", "").replace("```", "").strip()
         data = json.loads(raw_json)
-        if isinstance(data, list):
-            data = data[0]
+        if isinstance(data, list): data = data[0]
             
         has_ss = await get_stealth_screenshot(data['url'])
         
@@ -195,7 +186,7 @@ async def run_pipeline():
                         "end": (chunk["offset"] + chunk["duration"]) / 10000000
                     })
         
-        build_sota_video(data, has_ss, word_timings)
+        build_sota_video(has_ss, word_timings)
         upload_all(data)
         send_telegram(message=f"🏁 SOTA Success: {data['name']}", file_path="output.mp4")
         
@@ -205,3 +196,4 @@ async def run_pipeline():
 
 if __name__ == "__main__":
     asyncio.run(run_pipeline())
+        
