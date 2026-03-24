@@ -5,7 +5,6 @@ import requests
 import time
 import random
 import subprocess
-import yt_dlp
 from google import genai
 from playwright.async_api import async_playwright
 import edge_tts
@@ -48,83 +47,68 @@ async def get_stealth_screenshot(url):
     except:
         return False
 
-def download_youtube_gameplay():
-    print("🎮 Fetching random gameplay from YouTube...")
-    # Removed the dead video and added active ones
-    channel_videos = [
-        "https://www.youtube.com/watch?v=n_Dv4JMiwK8",
-        "https://www.youtube.com/watch?v=2XoH2R-kHpk",
-        "https://www.youtube.com/watch?v=3V-1AAYC8bY",
-        "https://www.youtube.com/watch?v=8mG8L0U4wS0"
-    ]
-    random.shuffle(channel_videos)
+def get_local_gameplay():
+    """100% Reliable: Picks a random video from your local 'gameplays' folder"""
+    print("🎮 Selecting local gameplay from the vault...")
     
-    ydl_opts = {
-        'format': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/mp4',
-        'outtmpl': 'bottom.mp4',
-        'quiet': True,
-        'no_warnings': True
-    }
+    if not os.path.exists("gameplays"):
+        os.makedirs("gameplays")
+        
+    videos = [f for f in os.listdir("gameplays") if f.endswith(".mp4")]
     
-    success = False
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        for url in channel_videos:
-            try:
-                print(f"Trying video: {url}")
-                ydl.download([url])
-                success = True
-                break # If it works, break out of the loop
-            except Exception as e:
-                print(f"⚠️ Failed to download {url}: {e}")
-
-    # The Ultimate Fallback: High-speed neon video from Pexels (No dead links)
-    if not success:
-        print("⚠️ All YT links failed! Using Pexels fallback...")
-        res = requests.get("https://api.pexels.com/videos/search?query=neon+abstract+fast&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
+    if not videos:
+        print("⚠️ No videos found in 'gameplays' folder! Using emergency fallback.")
+        res = requests.get("https://api.pexels.com/videos/search?query=matrix+coding&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
         r_fallback = requests.get(res['videos'][0]['video_files'][0]['link'])
-        r_fallback.raise_for_status()
         with open("bottom.mp4", 'wb') as f:
             f.write(r_fallback.content)
+        return "bottom.mp4"
+    
+    chosen_video = random.choice(videos)
+    print(f"✅ Selected: {chosen_video}")
+    return os.path.join("gameplays", chosen_video)
 
 # --- 3. VIDEO BUILDER ---
-def build_sota_video(has_ss, word_timings):
+def build_sota_video(data, has_ss, word_timings):
     print("🎬 FFmpeg: Building Final Video...")
     
-    # 1. Download Exact Font (Fixes invisible text on Ubuntu completely)
     font_url = "https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Black.ttf"
     with open("font.ttf", "wb") as f:
         f.write(requests.get(font_url).content)
 
-    # 2. Download Gameplay
-    download_youtube_gameplay()
+    gameplay_path = get_local_gameplay()
 
-    # 3. Download Music
     r_music = requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3")
     with open("music.mp3", 'wb') as f:
         f.write(r_music.content)
 
-    # 4. Top Visual
     top_input = "-loop 1 -i tool_ss.png" if has_ss else "-i top_fallback.mp4"
     if not has_ss:
         res_t = requests.get("https://api.pexels.com/videos/search?query=matrix+coding&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
         with open("top_fallback.mp4", 'wb') as f:
             f.write(requests.get(res_t['videos'][0]['video_files'][0]['link']).content)
 
-    # 5. Generate Text Filters (Bulletproof drawtext engine)
     text_filters = []
-    for item in word_timings:
-        word = item['word'].replace("'", "").replace('"', '').upper()
-        s, e = item['start'], item['end']
-        text_filters.append(
-            f"drawtext=fontfile=font.ttf:text='{word}':fontcolor=yellow:fontsize=120:"
-            f"x=(w-text_w)/2:y=(h-text_h)/2:borderw=6:bordercolor=black:enable='between(t,{s},{e})'"
+    if word_timings:
+        for item in word_timings:
+            word = item['word'].replace("'", "").replace('"', '').upper()
+            s, e = item['start'], item['end']
+            text_filters.append(
+                f"drawtext=fontfile=font.ttf:text='{word}':fontcolor=yellow:fontsize=120:"
+                f"x=(w-text_w)/2:y=(h-text_h)/2:borderw=6:bordercolor=black:enable='between(t,{s},{e})'"
+            )
+        full_text_chain = ",".join(text_filters)
+    else:
+        safe_name = data.get('name', 'AI TOOL').replace("'", "").upper()
+        full_text_chain = (
+            f"drawtext=fontfile=font.ttf:text='{safe_name}':fontcolor=yellow:fontsize=120:"
+            f"x=(w-text_w)/2:y=(h-text_h)/2:borderw=6:bordercolor=black"
         )
-    full_text_chain = ",".join(text_filters)
 
-    # 6. Final FFmpeg Command
     video_top = "loop=loop=-1:size=1,scale=1080:960" if has_ss else "scale=1080:960,setsar=1"
+    
     cmd = (
-        f'ffmpeg -y {top_input} -i bottom.mp4 -i voice.mp3 -i music.mp3 '
+        f'ffmpeg -y {top_input} -i "{gameplay_path}" -i voice.mp3 -i music.mp3 '
         f'-filter_complex "'
         f'[0:v]{video_top}[t]; [1:v]scale=1080:960,setsar=1[b]; [t][b]vstack=inputs=2[v_stack]; '
         f'[v_stack]{full_text_chain}[outv]; '
@@ -184,7 +168,6 @@ async def run_pipeline():
 
         raw_json = res.text.replace("```json", "").replace("```", "").strip()
         data = json.loads(raw_json)
-        
         if isinstance(data, list):
             data = data[0]
             
@@ -205,7 +188,7 @@ async def run_pipeline():
                         "end": (chunk["offset"] + chunk["duration"]) / 10000000
                     })
         
-        build_sota_video(has_ss, word_timings)
+        build_sota_video(data, has_ss, word_timings)
         upload_all(data)
         send_telegram(message=f"🏁 SOTA Success: {data['name']}", file_path="output.mp4")
         
