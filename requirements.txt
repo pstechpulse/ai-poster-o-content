@@ -5,5 +5,4 @@ instagrapi
 google-api-python-client
 google-auth-oauthlib
 playwright
-opencv-python-headless
 numpy
