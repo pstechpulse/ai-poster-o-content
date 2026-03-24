@@ -6,6 +6,7 @@ import time
 import random
 import subprocess
 import shutil
+import re
 from google import genai
 from groq import Groq
 import edge_tts
@@ -48,13 +49,14 @@ def get_viral_content(prompt):
 
 # --- 3. DIRECT DRAWTEXT RENDERER ---
 def sanitize_word(w):
-    # Removes chars that break FFmpeg command parsing, swaps single quote for a smart quote
-    return w.strip().upper().replace("'", "’").replace('"', '”').replace(':', '').replace(',', '')
+    # This strips ALL punctuation. No commas or quotes can break FFmpeg ever again.
+    clean = re.sub(r'[^\w\s]', '', w)
+    return clean.strip().upper()
 
 def build_sota_video(word_timings, mode):
     print(f"🎬 FFmpeg: Building Final Video via DIRECT DRAWTEXT for mode: {mode}...")
 
-    # 1. DOWNLOAD FONTS LOCALLY (Bypassing Ubuntu System Fonts)
+    # 1. DOWNLOAD FONTS LOCALLY 
     font_en = os.path.abspath("font_en.ttf")
     font_hi = os.path.abspath("font_hi.ttf")
     
@@ -66,7 +68,7 @@ def build_sota_video(word_timings, mode):
         with open(font_hi, "wb") as f: f.write(requests.get("https://github.com/google/fonts/raw/main/ofl/notosansdevanagari/NotoSansDevanagari-Black.ttf").content)
         
     font_path = font_hi if mode == "hindi" else font_en
-    font_path = font_path.replace('\\', '/') # Ensure safe paths for FFmpeg
+    font_path = font_path.replace('\\', '/')
 
     # 2. SELECT FROM VAULT
     vault_path = "gameplays"
@@ -86,22 +88,20 @@ def build_sota_video(word_timings, mode):
     # 3. Music
     with open("music.mp3", 'wb') as f: f.write(requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3").content)
 
-    # 4. GENERATE FILTERGRAPH SCRIPT (The Magic Fix)
-    # We write every single word's timestamp into a text file so the terminal doesn't crash
-    filter_lines = ["[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"]
-    
-    if not word_timings: # Safety net
-        word_timings.append({"word": " ", "start": 0.0, "end": 1.0})
-        
+    # 4. GENERATE FILTERGRAPH SCRIPT
+    drawtexts = []
     for w in word_timings:
         word = sanitize_word(w['word'])
         if not word: continue
-        start, end = w['start'], w['end']
         # Paint instruction: Dead center, Yellow, Size 130, Black Border width 8
-        line = f"drawtext=fontfile='{font_path}':text='{word}':enable='between(t,{start},{end})':x=(w-text_w)/2:y=(h-text_h)/2:fontsize=130:fontcolor=yellow:borderw=8:bordercolor=black"
-        filter_lines.append(line)
+        dt = f"drawtext=fontfile='{font_path}':text='{word}':enable='between(t,{w['start']},{w['end']})':x=(w-text_w)/2:y=(h-text_h)/2:fontsize=130:fontcolor=yellow:borderw=8:bordercolor=black"
+        drawtexts.append(dt)
         
-    video_chain = ",".join(filter_lines) + "[outv];\n"
+    if not drawtexts:
+        drawtexts.append(f"drawtext=fontfile='{font_path}':text='':enable='between(t,0,1)':x=0:y=0")
+        
+    # Chain all the drawtext commands together into one massive stream
+    video_chain = f"[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,{','.join(drawtexts)}[outv];\n"
     audio_chain = "[1:a]volume=2.0[v_a]; [2:a]volume=0.15[m_a]; [v_a][m_a]amix=inputs=2:duration=first[outa]"
     
     with open("filter.txt", "w", encoding="utf-8") as f:
@@ -151,20 +151,36 @@ async def run_pipeline():
         
         data = get_viral_content(prompt)
         voice = "hi-IN-MadhurNeural" if mode == "hindi" else "en-US-BrianNeural"
+        
+        # 1. Just save the MP3. Ignore Microsoft's broken WebSockets.
+        print("🎙️ Generating Voice...")
         communicate = edge_tts.Communicate(data['script'], voice, rate="+25%", pitch="+10Hz")
+        await communicate.save("voice.mp3")
+        
+        # 2. Let Groq AI listen to the file and give us perfect timestamps
+        print("🧠 Using Groq Whisper API for Foolproof Timestamps...")
+        with open("voice.mp3", "rb") as f:
+            transcription = groq_client.audio.transcriptions.create(
+                file=("voice.mp3", f.read()),
+                model="whisper-large-v3",
+                response_format="verbose_json",
+                timestamp_granularities=["word"]
+            )
         
         word_timings = []
-        with open("voice.mp3", "wb") as f:
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio": f.write(chunk["data"])
-                elif chunk["type"] == "WordBoundary":
-                    word_timings.append({"word": chunk["text"], "start": chunk["offset"]/10000000, "end": (chunk["offset"]+chunk["duration"])/10000000})
+        for w in transcription.words:
+            # Safely handle both dict and object access depending on Groq's return style
+            word_text = w['word'] if isinstance(w, dict) else w.word
+            start_time = w['start'] if isinstance(w, dict) else w.start
+            end_time = w['end'] if isinstance(w, dict) else w.end
+            word_timings.append({"word": word_text, "start": start_time, "end": end_time})
         
         build_sota_video(word_timings, mode)
         upload_all(data)
         send_telegram(message=f"🏁 SOTA Success: {data['name']}\nKeyword: {data['keyword']}\nMode: {mode.upper()}", file_path="output.mp4")
     except Exception as e:
         send_telegram(message=f"💥 FINAL CRASH: {str(e)}")
+        print(f"CRASH: {str(e)}")
 
 if __name__ == "__main__":
     asyncio.run(run_pipeline())
