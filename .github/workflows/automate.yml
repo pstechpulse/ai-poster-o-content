@@ -15,7 +15,7 @@ jobs:
       - name: Install System Dependencies & Fonts
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-liberation fonts-noto fonts-noto-devanagari libnss3-dev libatk-bridge2.0-0 libxkbcommon0 libgbm-dev fontconfig
+          sudo apt-get install -y ffmpeg fonts-liberation fonts-noto fonts-noto-core fonts-indic libnss3-dev libatk-bridge2.0-0 libxkbcommon0 libgbm-dev fontconfig
           fc-cache -f -v
           
       - name: Setup Python
