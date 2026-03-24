@@ -13,6 +13,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
 
+# --- 1. SETUP ---
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 def send_telegram(message=None, file_path=None):
@@ -30,6 +31,7 @@ def send_telegram(message=None, file_path=None):
     except Exception as e:
         print(f"❌ Telegram Error: {e}")
 
+# --- 2. ASSETS & TIMINGS ---
 async def get_stealth_screenshot(url):
     print(f"📸 Screenshotting {url}...")
     try:
@@ -66,28 +68,41 @@ def create_ass_file(word_timings):
             end = format_ass_time(item['end'])
             f.write(f"Dialogue: 0,0:{start},0:{end},Default,,0,0,0,,{{\\b1}}{item['word'].upper()}\n")
 
+# --- 3. VIDEO BUILDER ---
 def build_sota_video(has_ss):
     print("🎬 FFmpeg: Building Final Video...")
     
+    # Bottom Gameplay (With raise_for_status to prevent corrupt MP4s)
     gta_url = "https://raw.githubusercontent.com/the-muda-project/video-assets/main/gta_ramp_loop.mp4"
     try:
+        r = requests.get(gta_url)
+        r.raise_for_status() # This throws an error if the link is dead
         with open("bottom.mp4", 'wb') as f:
-            f.write(requests.get(gta_url).content)
+            f.write(r.content)
     except:
+        print("⚠️ GTA link failed, falling back to Pexels...")
         res = requests.get("https://api.pexels.com/videos/search?query=neon+abstract+fast&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
+        r_fallback = requests.get(res['videos'][0]['video_files'][0]['link'])
+        r_fallback.raise_for_status()
         with open("bottom.mp4", 'wb') as f:
-            f.write(requests.get(res['videos'][0]['video_files'][0]['link']).content)
+            f.write(r_fallback.content)
 
+    # Music
     r_music = requests.get("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3")
+    r_music.raise_for_status()
     with open("music.mp3", 'wb') as f:
         f.write(r_music.content)
 
+    # Top Visual
     top_input = "-loop 1 -i tool_ss.png" if has_ss else "-i top_fallback.mp4"
     if not has_ss:
         res_t = requests.get("https://api.pexels.com/videos/search?query=matrix+coding&per_page=1", headers={"Authorization": os.getenv("PEXELS_API_KEY")}).json()
+        r_top = requests.get(res_t['videos'][0]['video_files'][0]['link'])
+        r_top.raise_for_status()
         with open("top_fallback.mp4", 'wb') as f:
-            f.write(requests.get(res_t['videos'][0]['video_files'][0]['link']).content)
+            f.write(r_top.content)
 
+    # FFmpeg Execution
     video_top = "loop=loop=-1:size=1,scale=1080:960" if has_ss else "scale=1080:960,setsar=1"
     cmd = (
         f'ffmpeg -y {top_input} -i bottom.mp4 -i voice.mp3 -i music.mp3 '
@@ -99,6 +114,7 @@ def build_sota_video(has_ss):
     )
     subprocess.run(cmd, shell=True)
 
+# --- 4. UPLOADER ---
 def upload_all(data):
     try:
         cl = Client()
@@ -128,6 +144,7 @@ def upload_all(data):
     except Exception as e:
         print(f"❌ YT Error: {e}")
 
+# --- 5. PIPELINE ---
 async def run_pipeline():
     try:
         mode = random.choice(["hindi", "global"])
